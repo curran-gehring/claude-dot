@@ -30,7 +30,7 @@ project and suggests two or three responsibilities it could take on.
 | --- | --- |
 | A primary dot you name, with a shape, color, eyes, glasses and accessories | `/dot setup`: name, shape, eyes, glasses, accessory, color. Live preview. Its face changes with its mood: idle `(•ᴗ•)`, working `(•_•)`, needs you `(•o•)!`, asleep `(-‿-)ᶻ` |
 | Responsibilities that "stay true over time" | `/dot assign [<when> \|] <job>`, or just tell Claude ("have my dot check CI every weekday at 9"). Claude uses the `mcp__dot__assign` tool |
-| The dot decides when to check, or you set a fixed schedule | No schedule: it checks during research passes. Fixed: `every 2h`, `hourly`, `daily 9:00`, `weekdays 9:30`, `weekends 8am`, `mon,thu 17:00` (local time) |
+| The dot decides when to check, or you set a fixed schedule | No schedule: the dot runs it while you're away, at most once per proactive interval (`proactiveMinutes`, default 2h). Fixed: `every 2h`, `hourly`, `daily 9:00`, `weekdays 9:30`, `weekends 8am`, `mon,thu 17:00` (local time) |
 | Its own cloud computer | A background subagent (`dot:worker`) in the responsibility's project directory. Nothing runs in your foreground |
 | Proactive research, read-only | `dot:researcher`, given only Read/Glob/Grep/WebSearch/WebFetch. The guard also refuses anything else from that agent, outside the agent's control. Runs after 10 idle minutes, at most every 2 hours per project |
 | Delegating to Codex | `/dot delegate <task>` hands the task to a background worker; the result lands in the inbox |

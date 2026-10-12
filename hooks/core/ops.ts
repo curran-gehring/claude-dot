@@ -51,6 +51,18 @@ export function dueResponsibilities(data: DotData, now: number): DotResponsibili
     && !isRunning(data, run => run.responsibilityId === one.id))
 }
 
+/**
+ * Responsibilities with no schedule that the dot runs on its own pace: not
+ * paused, not running, and not run within `everyMs` (never run counts as due).
+ */
+export function selfPacedDue(data: DotData, now: number, everyMs: number): DotResponsibility[] {
+  return data.responsibilities.filter(one =>
+    one.schedule === null
+    && !one.isPaused
+    && (one.lastRunAt === null || now - one.lastRunAt >= everyMs)
+    && !isRunning(data, run => run.responsibilityId === one.id))
+}
+
 export type Job = { kind: DotActivityKind; responsibilityId: string | null; label: string; cwd: string }
 
 /**

@@ -6,7 +6,7 @@ import { DEFAULT_LOOK, face } from './core/avatar'
 import { HELP, parseCommand } from './core/command'
 import type { DotCommand } from './core/command'
 import { DotDataError, decodeData, emptyData } from './core/data'
-import { addInbox, addNotes, addResponsibility, claimWork, dueResponsibilities, failWork, finishWork, reapStale } from './core/ops'
+import { addInbox, addNotes, addResponsibility, claimWork, dueResponsibilities, failWork, finishWork, reapStale, selfPacedDue } from './core/ops'
 import type { Job } from './core/ops'
 import { parseReport } from './core/report'
 import { REVIEW_SYSTEM, buildReviewPrompt, parseVerdict } from './core/review'
@@ -355,6 +355,12 @@ async function tick($: $): Promise<void> {
     }
 
     const isIdle = !session.isMainTurnRunning && now - session.lastPersonAt >= config.idleMinutes * MIN
+    if (config.proactiveMinutes > 0 && isIdle) {
+      // "When the dot decides": an unscheduled responsibility runs while you are away, once per proactive interval.
+      for (const own of selfPacedDue(data, now, config.proactiveMinutes * MIN)) {
+        await startJob($, { kind: 'work', responsibilityId: own.id, label: own.text, cwd: own.cwd }, workPrompt(data, own))
+      }
+    }
     const isDue = now - (data.lastResearchAt[session.cwd] ?? 0) >= config.proactiveMinutes * MIN
     if (config.proactiveMinutes > 0 && isIdle && isDue) {
       await startJob($, { kind: 'research', responsibilityId: null, label: 'Proactive research', cwd: session.cwd }, researchPrompt(data, session.cwd, false))

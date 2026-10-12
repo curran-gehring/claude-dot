@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { emptyData } from '../hooks/core/data'
 import { moodOf } from '../hooks/core/avatar'
-import { addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
+import { addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, selfPacedDue, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
 
 const MIN = 60_000
 const UTC = () => 0
@@ -130,4 +130,18 @@ test('a report that needs the person keeps saying so after it is saved', async (
   expect(withItem && moodOf(withItem.data)).toBe('needs-you')
   const bare = finishWork(started, 'ag', { summary: 'deploy failed', needsYou: true, inbox: [], notes: [] }, { now: NOW, newId: ids })
   expect(bare?.data.inbox).toEqual([expect.objectContaining({ kind: 'result', title: 'Check CI: deploy failed', isUrgent: true })])
+})
+
+test('an unscheduled responsibility runs on the dot’s own pace', async () => {
+  const data = withJob(null)
+  const every = 120 * MIN
+  expect(selfPacedDue(data, NOW, every).map(r => r.id)).toEqual(['r1'])
+  const claimed = claimWork(data, { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetOf: UTC, id: 'a1', sessionId: 's1' })
+  if (claimed === null) throw new Error('not claimed')
+  expect(selfPacedDue(claimed.data, NOW + MIN, every)).toEqual([])
+  const done = { ...claimed.data, activity: claimed.data.activity.map(a => ({ ...a, status: 'done' as const })) }
+  expect(selfPacedDue(done, NOW + 60 * MIN, every)).toEqual([])
+  expect(selfPacedDue(done, NOW + 121 * MIN, every).map(r => r.id)).toEqual(['r1'])
+  expect(selfPacedDue({ ...done, responsibilities: done.responsibilities.map(r => ({ ...r, isPaused: true })) }, NOW + 121 * MIN, every)).toEqual([])
+  expect(selfPacedDue(withJob(), NOW, every)).toEqual([])
 })
