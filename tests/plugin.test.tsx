@@ -421,6 +421,23 @@ describe('sharing the store with other sessions', () => {
     expect(dirs.get(LOCK)?.owner).toBe('thief')
   })
 
+  test('the band shows what another session changed', async ($, on) => {
+    const { store } = host(on, stored())
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+    const band = await $.ui.mount({
+      plugin: 'dot', surface: 'terminal', component: 'AbovePrompt',
+      props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} },
+    })
+    expect(await band.find({ text: /Alfred/ })).toBeDefined()
+
+    const data = store.get('data') as DotData
+    store.set('data', { ...data, dot: data.dot && { ...data.dot, name: 'Jeeves' } })
+    await $.turn.complete({ answer: 'done', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+
+    expect(await band.find({ text: /Jeeves/ })).toBeDefined()
+    await band.unmount()
+  })
+
   test('the guard reads rules another session just added', async ($, on) => {
     const { store } = host(on, stored())
     on('tool.check', () => ({ decision: 'allow' }))

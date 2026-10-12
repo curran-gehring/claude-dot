@@ -38,6 +38,8 @@ const LOCK_LEASE_MS = LOCK_STALE_MS / 2
 /** How long a write waits for the lock before it fails loudly. */
 const LOCK_WAIT_MS = 5_000
 const LOCK_POLL_MS = 50
+/** How often an interactive session re-reads the store for what other sessions changed. */
+const WATCH_MS = 10_000
 const PANE = 'dot'
 const LOOK_PANE = 'dot-look'
 const OWN_TOOL = 'mcp__dot__'
@@ -57,6 +59,7 @@ const session = {
   isMainTurnRunning: false,
   isTicking: false,
   ticker: null as { cancel: () => void } | null,
+  watcher: null as { cancel: () => void } | null,
   /** Answers of agents that finished before the dot saved their id, by agent id. */
   unclaimed: new Map<string, { answer: string; isAborted: boolean }>(),
   /** Agent ids not yet saved on their activity (the save failed), by activity id. */
@@ -236,6 +239,17 @@ async function refresh($: $): Promise<DotData> {
   const data = await load($)
   await update($, DATA, () => data)
   return data
+}
+
+/** Pick up what other sessions wrote: the copy is replaced, and its readers redrawn, only when it differs. */
+async function refreshIfChanged($: $): Promise<void> {
+  try {
+    const data = await load($)
+    const held = await read($, DATA)
+    if (held === undefined || JSON.stringify(held) !== JSON.stringify(data)) await update($, DATA, () => data)
+  } catch (error) {
+    $.ui.log(`dot: could not re-read the store: ${messageOf(error)}`, { to: 'debug' })
+  }
 }
 
 /** The session's copy, read from the store the first time. */
@@ -733,6 +747,8 @@ export const register: Register = (on, options) => {
     await mutate($, d => reapStale({ ...d, heartbeats: { ...d.heartbeats, [session.id]: now } }, now))
     session.ticker?.cancel()
     session.ticker = session.isInteractive ? $.clock.every(MIN, () => void tick($)) : null
+    session.watcher?.cancel()
+    session.watcher = session.isInteractive ? $.clock.every(WATCH_MS, () => void refreshIfChanged($)) : null
 
     return started
   })
@@ -741,6 +757,8 @@ export const register: Register = (on, options) => {
     session.isEnded = true
     session.ticker?.cancel()
     session.ticker = null
+    session.watcher?.cancel()
+    session.watcher = null
     session.isInteractive = false
     // Let other sessions see at once that work started here will not finish.
     await mutate($, d => {
@@ -752,6 +770,7 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     session.lastPersonAt = await $.clock.now()
+    await refreshIfChanged($)
     return next(e)
   })
 
@@ -764,6 +783,7 @@ export const register: Register = (on, options) => {
     if (e.agentId === undefined) {
       session.isMainTurnRunning = false
       session.lastPersonAt = await $.clock.now()
+      await refreshIfChanged($)
     } else {
       await collect($, e.agentId, e.answer, e.isAborted)
     }
