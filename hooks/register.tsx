@@ -98,6 +98,7 @@ async function readHeld($: $, isHeld: () => Promise<boolean>): Promise<DotData> 
     if (!(await isHeld())) throw new Error('dot: this session lost the store lock before setting aside unreadable data; nothing was changed')
     const backup = `corrupt-${await $.clock.now()}`
     await $.store.set(backup, raw)
+    if (!(await isHeld())) throw new Error(`dot: this session lost the store lock after keeping unreadable data under "${backup}"; the store was not reset`)
     await $.store.set(STORE_KEY, emptyData())
     const said = `dot: its saved data did not read (${error.message}). It is kept under store key "${backup}"; the dot starts fresh.`
     $.ui.log(said)
