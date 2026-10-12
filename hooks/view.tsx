@@ -25,6 +25,11 @@ export type Actions = {
 
 type Ui = Pick<ElementTable, 'Box' | 'Text' | 'Button'>
 
+// Theme keys, not the terminal's defaults: a light theme in a dark terminal paints the pane
+// light, and default-colored text on it is unreadable.
+const TEXT = 'text'
+const INACTIVE = 'inactive'
+
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`
 }
@@ -35,7 +40,7 @@ export function band(ui: Ui, data: DotData, now: number, offset: Offset, act: Ac
     return (
       <Box flexDirection="row">
         <Text color={COLOR_HEX.teal} bold>{face(DEFAULT_LOOK, 'idle')}</Text>
-        <Text dimColor wrap="truncate-end"> Meet your dot: it keeps watch in the background while you work. </Text>
+        <Text color={INACTIVE} wrap="truncate-end"> Meet your dot: it keeps watch in the background while you work. </Text>
         <Button key="setup" label="Set up" onPress={act.openLook} />
       </Box>
     )
@@ -57,9 +62,9 @@ export function band(ui: Ui, data: DotData, now: number, offset: Offset, act: Ac
 
   const row: RenderElement[] = [
     <Text color={COLOR_HEX[data.dot.look.color]} bold>{face(data.dot.look, mood)}</Text>,
-    <Text bold> {data.dot.name}</Text>,
+    <Text color={TEXT} bold> {data.dot.name}</Text>,
   ]
-  if (parts.length > 0) row.push(<Text dimColor wrap="truncate-end"> · {parts.join(' · ')}</Text>)
+  if (parts.length > 0) row.push(<Text color={INACTIVE} wrap="truncate-end"> · {parts.join(' · ')}</Text>)
   if (need > 0) row.push(<Text color="warning"> · {need} needs you</Text>)
   if (fresh > 0) row.push(<Text color="suggestion"> · {fresh} new</Text>)
   row.push(<Text> </Text>)
@@ -75,7 +80,7 @@ export function pane(ui: Ui, data: DotData, now: number, offset: Offset, user: s
   if (data.dot === null) {
     return (
       <Box flexDirection="column">
-        <Text>You have no dot yet.</Text>
+        <Text color={TEXT}>You have no dot yet.</Text>
         <Button key="setup" label="Set up your dot" variant="primary" onPress={act.openLook} />
       </Box>
     )
@@ -84,8 +89,8 @@ export function pane(ui: Ui, data: DotData, now: number, offset: Offset, user: s
   // One keyed box per section, so its rows never sit as unkeyed siblings of another section's.
   const section = (title: string, body: RenderElement[], empty: string): RenderElement => (
     <Box key={`section-${title.split(' ')[0]}`} flexDirection="column" marginTop={1}>
-      <Text bold>{title}</Text>
-      {body.length > 0 ? body : <Text dimColor>{empty}</Text>}
+      <Text color={TEXT} bold>{title}</Text>
+      {body.length > 0 ? body : <Text color={INACTIVE}>{empty}</Text>}
     </Box>
   )
   const need = new Set(needsYou(data).map(item => item.id))
@@ -97,52 +102,52 @@ export function pane(ui: Ui, data: DotData, now: number, offset: Offset, user: s
     <Box flexDirection="column">
       <Box flexDirection="row">
         <Text color={COLOR_HEX[data.dot.look.color]} bold>{face(data.dot.look, moodOf(data))}</Text>
-        <Text bold>  {data.dot.name}</Text>
-        <Text dimColor>  {handleFor(user, data.dot.name)}</Text>
+        <Text color={TEXT} bold>  {data.dot.name}</Text>
+        <Text color={INACTIVE}>  {handleFor(user, data.dot.name)}</Text>
       </Box>
-      <Text dimColor>
+      <Text color={INACTIVE}>
         Auto-review {data.settings.isAutoReview ? 'on' : 'off'} · {data.rules.length} rule{data.rules.length === 1 ? '' : 's'} · {data.notes.length} note{data.notes.length === 1 ? '' : 's'}{data.settings.isAsleep ? ' · asleep' : ''}
       </Text>
       {section(`Inbox (${inbox.length})`, inbox.slice(0, 12).map(item => (
         <Box key={`inbox-${item.id}`} flexDirection="column">
           <Box flexDirection="row">
             <Text color={need.has(item.id) ? 'warning' : 'suggestion'} bold={need.has(item.id)}>{KIND_MARK[item.kind]} {item.title}</Text>
-            <Text dimColor>  {ago(item.at, now)}  </Text>
+            <Text color={INACTIVE}>  {ago(item.at, now)}  </Text>
             <Button key={`done-${item.id}`} label="Done" onPress={() => act.markDone(item.id)} />
             <Button key={`ask-${item.id}`} label="Ask Claude" onPress={() => act.askClaude(item)} />
           </Box>
-          <Text dimColor>   {clip(item.body, 600)}</Text>
+          <Text color={INACTIVE}>   {clip(item.body, 600)}</Text>
         </Box>
       )), 'Nothing for you right now.')}
       {section('Working on', running.map(one => (
-        <Text key={`run-${one.id}`}>● {one.label} <Text dimColor>({one.kind}, started {ago(one.startedAt, now)})</Text></Text>
+        <Text key={`run-${one.id}`} color={TEXT}>● {one.label} <Text color={INACTIVE}>({one.kind}, started {ago(one.startedAt, now)})</Text></Text>
       )), 'Nothing running.')}
       {section('Responsibilities', data.responsibilities.map(one => (
         <Box key={`resp-${one.id}`} flexDirection="column">
           <Box flexDirection="row">
-            <Text dimColor={one.isPaused}>{one.text}</Text>
-            <Text dimColor>  {one.isPaused ? 'paused' : describeSchedule(one.schedule)}{!one.isPaused && one.nextRunAt ? `, next ${formatWhen(one.nextRunAt, now, offset)}` : ''}  </Text>
+            <Text color={one.isPaused ? INACTIVE : TEXT}>{one.text}</Text>
+            <Text color={INACTIVE}>  {one.isPaused ? 'paused' : describeSchedule(one.schedule)}{!one.isPaused && one.nextRunAt ? `, next ${formatWhen(one.nextRunAt, now, offset)}` : ''}  </Text>
             <Button key={`runnow-${one.id}`} label="Run" onPress={() => act.runNow(one.id)} />
             <Button key={`pause-${one.id}`} label={one.isPaused ? 'Resume' : 'Pause'} onPress={() => act.togglePause(one.id)} />
             <Button key={`drop-${one.id}`} label="Drop" onPress={() => act.drop(one.id)} />
           </Box>
-          {one.lastSummary ? <Text dimColor>   last: {clip(one.lastSummary, 300)}</Text> : <Text dimColor>   not run yet</Text>}
+          {one.lastSummary ? <Text color={INACTIVE}>   last: {clip(one.lastSummary, 300)}</Text> : <Text color={INACTIVE}>   not run yet</Text>}
         </Box>
       )), 'None yet: /dot assign <when> | <job>')}
       {section('Rules', data.rules.map(rule => (
         <Box key={`rule-${rule.id}`} flexDirection="row">
-          <Text>[{rule.level}] {rule.action}  </Text>
+          <Text color={TEXT}>[{rule.level}] {rule.action}  </Text>
           <Button key={`unrule-${rule.id}`} label="Remove" onPress={() => act.removeRule(rule.id)} />
         </Box>
       )), 'None: /dot rule <allow|when-asked|ask|handoff> <action>')}
       {section('Notes (what it knows)', data.notes.slice(-15).reverse().map(note => (
         <Box key={`note-${note.id}`} flexDirection="row">
-          <Text>{clip(note.text, 200)} <Text dimColor>({note.source})</Text>  </Text>
+          <Text color={TEXT}>{clip(note.text, 200)} <Text color={INACTIVE}>({note.source})</Text>  </Text>
           <Button key={`forget-${note.id}`} label="Forget" onPress={() => act.forget(note.id)} />
         </Box>
       )), 'Its notebook is empty.')}
       {section('Recently', recent.map(one => (
-        <Text key={`recent-${one.id}`} dimColor>{one.status === 'done' ? '✓' : '✗'} {one.label}: {clip(one.summary ?? '', 200)} ({ago(one.endedAt ?? one.startedAt, now)})</Text>
+        <Text key={`recent-${one.id}`} color={INACTIVE}>{one.status === 'done' ? '✓' : '✗'} {one.label}: {clip(one.summary ?? '', 200)} ({ago(one.endedAt ?? one.startedAt, now)})</Text>
       )), 'Nothing yet.')}
     </Box>
   )
@@ -155,7 +160,7 @@ export function look(table: ElementTable, surface: RenderSurface, draft: DotIden
   const preview = (
     <Box flexDirection="row">
       <Text color={COLOR_HEX[draft.look.color]} bold>{face(draft.look, 'idle')}</Text>
-      <Text bold>  {draft.name}</Text>
+      <Text color={TEXT} bold>  {draft.name}</Text>
     </Box>
   )
   // A phone has no text field or picker: it shows the dot and points elsewhere.
@@ -163,7 +168,7 @@ export function look(table: ElementTable, surface: RenderSurface, draft: DotIden
     return (
       <Box flexDirection="column">
         {preview}
-        <Text dimColor>Choose its name and look from the terminal or the desktop app: /dot setup</Text>
+        <Text color={INACTIVE}>Choose its name and look from the terminal or the desktop app: /dot setup</Text>
       </Box>
     )
   }
