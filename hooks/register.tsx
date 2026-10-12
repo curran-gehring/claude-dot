@@ -144,7 +144,12 @@ async function withLock<T>($: $, work: (isHeld: () => Promise<boolean>) => Promi
   const startedAt = await $.clock.now()
   for (;;) {
     if (await directory($, 'make', lock)) {
-      await $.fs.write(`${lock}/owner`, token)
+      try {
+        await $.fs.write(`${lock}/owner`, token)
+      } catch (error) {
+        await directory($, 'remove', lock)
+        throw new Error(`dot: could not write the store lock's owner file (${messageOf(error)}); the change was not saved`)
+      }
       break
     }
     const now = await $.clock.now()
@@ -158,12 +163,26 @@ async function withLock<T>($: $, work: (isHeld: () => Promise<boolean>) => Promi
     }
     await $.clock.sleep(LOCK_POLL_MS)
   }
-  const isHeld = async () => (await ownerOf($, lock)) === token
   try {
-    return await work(isHeld)
+    return await work(async () => (await ownerOf($, lock)) === token)
   } finally {
-    if (await isHeld()) await directory($, 'remove', lock)
+    await release($, lock, token)
   }
+}
+
+/**
+ * Releases the lock only if it is still this holder's: renamed aside first
+ * (atomic), then its token read, so a lock another session took after this
+ * one went stale is put back for it rather than deleted.
+ */
+async function release($: $, lock: string, token: string): Promise<void> {
+  const aside = `${lock}.released-${newId()}`
+  if (!(await directory($, 'move', lock, aside))) return
+  if ((await ownerOf($, aside)) === token) {
+    await directory($, 'remove', aside)
+    return
+  }
+  if (!(await directory($, 'move', aside, lock))) await directory($, 'remove', aside)
 }
 
 /** Reads the store, applies `change` and writes it back, holding the lock; redraws whoever reads it. */

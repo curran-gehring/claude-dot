@@ -202,7 +202,7 @@ describe('sharing the store with other sessions', () => {
   /** The kit hands fs paths over resolved (C:\home\me\...); the host keys them as written. */
   const norm = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
 
-  type Spies = { onRun?: (argv: readonly string[], dirs: Map<string, Dir>) => void; onGet?: (dirs: Map<string, Dir>) => void; onSet?: (key: string, dirs: Map<string, Dir>) => void }
+  type Spies = { failOwnerWrite?: boolean; onRun?: (argv: readonly string[], dirs: Map<string, Dir>) => void; onGet?: (dirs: Map<string, Dir>) => void; onSet?: (key: string, dirs: Map<string, Dir>) => void }
 
   function host(on: On, initial: DotData, spies: Spies = {}) {
     const store = new Map<string, unknown>([['data', initial]])
@@ -240,6 +240,7 @@ describe('sharing the store with other sessions', () => {
       throw new Error(`unexpected command ${e.argv.join(' ')}`)
     })
     on('fs.write', (_$, e) => {
+      if (spies.failOwnerWrite) throw new Error(`cannot write the owner file ${e.path}`)
       const dir = dirs.get(norm(e.path).replace(/\/owner$/, ''))
       if (dir === undefined) throw new Error(`no such directory for ${e.path}`)
       dir.owner = e.text
@@ -325,6 +326,35 @@ describe('sharing the store with other sessions', () => {
     expect(said.text).toContain('lost the store lock')
     expect(notes(store)).toEqual([])
     expect(dirs.get(LOCK)?.owner).toBe('thief')
+  })
+
+  test('a holder whose lock was replaced puts the new owner’s lock back on release', async ($, on) => {
+    let isReplaced = false
+    const { store, dirs } = host(on, stored(), {
+      onRun: (argv, d) => {
+        // Between our ownership check and our release, another session broke our lock as stale and took it.
+        const isRelease = (argv[0] === 'rm' || argv[0] === 'mv') && argv[1] === LOCK
+        if (!isRelease || isReplaced) return
+        isReplaced = true
+        d.set(LOCK, { mtimeMs: NOW, owner: 'next' })
+      },
+    })
+
+    await $.command.run(dot('note Prefers pnpm'))
+
+    expect(notes(store)).toEqual(['Prefers pnpm'])
+    expect(dirs.get(LOCK)?.owner).toBe('next')
+    expect([...dirs.keys()]).toEqual([LOCK])
+  })
+
+  test('a lock whose owner file could not be written is not left behind', async ($, on) => {
+    const { store, dirs } = host(on, stored(), { failOwnerWrite: true })
+
+    const said = await $.command.run(dot('note Prefers pnpm'))
+
+    expect(said.text).toContain('owner')
+    expect(notes(store)).toEqual([])
+    expect([...dirs.keys()]).toEqual([])
   })
 
   test('a lock that never frees fails loudly instead of writing', async ($, on) => {

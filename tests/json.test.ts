@@ -18,9 +18,17 @@ describe('lastJsonObject', () => {
     expect(lastJsonObject('```json\n{"a":1}\n```\nlater {"b":2}')).toEqual({ a: 1 })
   })
 
+  test('a long report is read whole, not from its middle', async () => {
+    const notes = Array.from({ length: 2_000 }, (_, at) => `note number ${at} with some words in it`)
+    const report = { summary: 'long', inbox: [{ kind: 'result', title: 't', body: 'b' }], notes }
+    expect(lastJsonObject(`Done.
+${JSON.stringify(report)}`)).toEqual(report)
+  })
+
   test('nothing that parses is undefined, quickly', async () => {
     expect(lastJsonObject('{ not json } {also not}')).toBeUndefined()
     expect(lastJsonObject('{'.repeat(5_000) + 'x' + '}'.repeat(4_000))).toBeUndefined()
+    expect(lastJsonObject('{ a '.repeat(50_000) + '{"b":1}')).toEqual({ b: 1 })
     expect(lastJsonObject('no braces')).toBeUndefined()
   })
 })
