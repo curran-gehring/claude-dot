@@ -56,11 +56,21 @@ function nameOf(data: DotData): string {
 // ── The store: the source of truth every session shares ────────────────
 
 /**
- * Reads the stored dot. A value that does not decode is kept under a
- * `corrupt-<time>` key, said loudly, and replaced by a fresh dot, so one bad
- * write never leaves the guard or the scheduler dead.
+ * Reads the stored dot. A value that does not decode is set aside (under the
+ * store lock, like every write) and replaced by a fresh dot, said loudly, so
+ * one bad write never leaves the guard or the scheduler dead.
  */
 async function load($: $): Promise<DotData> {
+  try {
+    return decodeData(await $.store.get(STORE_KEY))
+  } catch (error) {
+    if (!(error instanceof DotDataError)) throw error
+    return withLock($, () => readHeld($))
+  }
+}
+
+/** Reads the store while holding the lock, setting aside a value that does not decode. */
+async function readHeld($: $): Promise<DotData> {
   const raw = await $.store.get(STORE_KEY)
   try {
     return decodeData(raw)
@@ -83,47 +93,84 @@ async function lockPath($: $): Promise<string> {
   return `${config ?? `${home}/.claude`}/plugins/dot.lock`.replace(/\\/g, '/')
 }
 
-/** `mkdir` or `rmdir` on the host: true when it succeeded. */
-async function directory($: $, verb: 'mkdir' | 'rmdir', path: string): Promise<boolean> {
+/** Creates, renames or removes a directory on the host; true when it did. Each is atomic. */
+async function directory($: $, op: 'make' | 'move' | 'remove', path: string, to = ''): Promise<boolean> {
   const isWindows = (await $.env.get('ComSpec')) !== undefined
-  const argv = isWindows ? ['cmd', '/d', '/c', verb, path.replace(/\//g, '\\')] : [verb, path]
+  const native = (p: string) => (isWindows ? p.replace(/\//g, '\\') : p)
+  const argv = {
+    make: isWindows ? ['cmd', '/d', '/c', 'mkdir', native(path)] : ['mkdir', path],
+    move: isWindows ? ['cmd', '/d', '/c', 'move', native(path), native(to)] : ['mv', path, to],
+    remove: isWindows ? ['cmd', '/d', '/c', 'rmdir', '/s', '/q', native(path)] : ['rm', '-r', path],
+  }[op]
   return (await $.process.run(argv, { timeoutMs: 10_000 })).exitCode === 0
+}
+
+async function ownerOf($: $, lock: string): Promise<string | null> {
+  return $.fs.read(`${lock}/owner`).then(text => String(text), () => null)
+}
+
+/**
+ * Breaks a lock judged stale, owned by `staleOwner`. The lock is renamed
+ * aside first (atomic: of several breakers, one wins), then its owner is read:
+ * the dead one's is removed; a lock that changed hands between the look and
+ * the rename is put back for its live owner.
+ */
+async function breakStale($: $, lock: string, staleOwner: string | null): Promise<void> {
+  const aside = `${lock}.broken-${newId()}`
+  if (!(await directory($, 'move', lock, aside))) return
+  if ((await ownerOf($, aside)) === staleOwner) {
+    await directory($, 'remove', aside)
+    return
+  }
+  if (!(await directory($, 'move', aside, lock))) {
+    // Someone took the free lock meanwhile; the session we moved loses it at its fence, before writing.
+    await directory($, 'remove', aside)
+  }
 }
 
 /**
  * Runs `work` while this session alone holds the store. Every open session
  * shares one last-writer-wins store with get and set only, so a
  * read-modify-write needs real mutual exclusion: `mkdir` either creates the
- * lock directory or fails, atomically, for every process. A lock older than
- * LOCK_STALE_MS belongs to a session that died inside its few milliseconds of
- * work, and is broken.
+ * lock directory or fails, atomically, for every process, and the holder
+ * writes its token inside. A lock older than LOCK_STALE_MS belongs to a session
+ * that died in its few milliseconds of work and is broken (breakStale). `work`
+ * gets `isHeld`, the fence it checks right before writing, and the lock is
+ * released only while it still carries this holder's token.
  */
-async function withLock<T>($: $, work: () => Promise<T>): Promise<T> {
-  const path = await lockPath($)
+async function withLock<T>($: $, work: (isHeld: () => Promise<boolean>) => Promise<T>): Promise<T> {
+  const lock = await lockPath($)
+  const token = newId()
   const startedAt = await $.clock.now()
-  while (!(await directory($, 'mkdir', path))) {
+  for (;;) {
+    if (await directory($, 'make', lock)) {
+      await $.fs.write(`${lock}/owner`, token)
+      break
+    }
     const now = await $.clock.now()
-    const held = await $.fs.stat(path).catch(() => null)
+    const held = await $.fs.stat(lock).catch(() => null)
     if (held !== null && now - held.mtimeMs > LOCK_STALE_MS) {
-      await directory($, 'rmdir', path)
+      await breakStale($, lock, await ownerOf($, lock))
       continue
     }
     if (now - startedAt > LOCK_WAIT_MS) {
-      throw new Error(`dot: another session held the store lock (${path}) for over ${LOCK_WAIT_MS / 1000}s; the change was not saved`)
+      throw new Error(`dot: another session held the store lock (${lock}) for over ${LOCK_WAIT_MS / 1000}s; the change was not saved`)
     }
     await $.clock.sleep(LOCK_POLL_MS)
   }
+  const isHeld = async () => (await ownerOf($, lock)) === token
   try {
-    return await work()
+    return await work(isHeld)
   } finally {
-    await directory($, 'rmdir', path)
+    if (await isHeld()) await directory($, 'remove', lock)
   }
 }
 
 /** Reads the store, applies `change` and writes it back, holding the lock; redraws whoever reads it. */
 async function mutate($: $, change: (data: DotData) => DotData): Promise<DotData> {
-  const next = await withLock($, async () => {
-    const changed = change(await load($))
+  const next = await withLock($, async isHeld => {
+    const changed = change(await readHeld($))
+    if (!(await isHeld())) throw new Error('dot: this session lost the store lock to another before writing; the change was not saved')
     await $.store.set(STORE_KEY, changed)
     return changed
   })
@@ -153,7 +200,7 @@ async function startJob($: $, job: Job, prompt: string): Promise<string> {
   const id = newId()
   const held = { isStarted: false }
   const data = await mutate($, d => {
-    const claimed = claimWork(d, job, { now, offsetMinutes: offsetAt(now), id, sessionId: session.id })
+    const claimed = claimWork(d, job, { now, offsetOf: offsetAt, id, sessionId: session.id })
     held.isStarted = claimed !== null
     return claimed?.data ?? d
   })
@@ -294,7 +341,7 @@ async function guard($: $, tool: string, input: unknown, agentId: string | undef
 async function assign($: $, text: string, schedule: DotSchedule | null): Promise<string> {
   const now = await $.clock.now()
   const cwd = await cwdOf($)
-  const data = await mutate($, d => addResponsibility(d, { text, schedule, cwd }, { now, offsetMinutes: offsetAt(now), id: newId() }))
+  const data = await mutate($, d => addResponsibility(d, { text, schedule, cwd }, { now, offsetOf: offsetAt, id: newId() }))
   return `${nameOf(data)} will keep this: ${text} (${describeSchedule(schedule)}).`
 }
 
@@ -303,7 +350,7 @@ async function setPaused($: $, id: string, isPaused: boolean): Promise<void> {
   await mutate($, d => ({
     ...d,
     responsibilities: d.responsibilities.map(one =>
-      one.id !== id ? one : { ...one, isPaused, nextRunAt: isPaused || one.schedule === null ? one.nextRunAt : nextRunAt(one.schedule, now, offsetAt(now)) }),
+      one.id !== id ? one : { ...one, isPaused, nextRunAt: isPaused || one.schedule === null ? one.nextRunAt : nextRunAt(one.schedule, now, offsetAt) }),
   }))
 }
 
@@ -357,7 +404,7 @@ function at<T>(list: readonly T[], index: number, what: string): T | string {
 
 async function runCommand($: $, command: DotCommand): Promise<string> {
   const now = await $.clock.now()
-  const offset = offsetAt(now)
+  const offset = offsetAt
   const data = await refresh($)
   const name = nameOf(data)
 
@@ -613,7 +660,7 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'mcp__dot__status' }, async $ => {
     const now = await $.clock.now()
-    return { result: statusText(await refresh($), now, offsetAt(now)) }
+    return { result: statusText(await refresh($), now, offsetAt) }
   })
 
   on('command.run', { command: 'dot' }, async ($, e) => {
@@ -630,14 +677,14 @@ export const register: Register = (on, options) => {
     const data = (await read($, DATA)) ?? (await load($))
     if (e.props.hasSurvey || !data.settings.isBandShown) return next(e)
     const now = await $.clock.now()
-    return band($.ui.resolve(e), data, now, offsetAt(now), actions($))
+    return band($.ui.resolve(e), data, now, offsetAt, actions($))
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const data = (await read($, DATA)) ?? (await load($))
     const now = await $.clock.now()
     const user = (await $.env.get('USERNAME')) ?? (await $.env.get('USER'))
-    return pane($.ui.resolve(e), data, now, offsetAt(now), user, actions($))
+    return pane($.ui.resolve(e), data, now, offsetAt, user, actions($))
   })
 
   on('ui.render', { component: 'Pane', requestId: LOOK_PANE }, async ($, e) => {

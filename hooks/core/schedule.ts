@@ -52,21 +52,27 @@ function minuteOf(hour: number, minute: number, half: string | undefined): numbe
   return ((hour % 12) + (half === 'pm' ? 12 : 0)) * 60 + minute
 }
 
+/** Local time minus UTC, in minutes, at an instant (UTC-5 is -300): it changes across DST. */
+export type Offset = (at: number) => number
+
 /**
- * When a schedule next runs after `now`, strictly later. `offsetMinutes` is
- * local time minus UTC (UTC-5 is -300), so `09:00` means the person's 09:00.
+ * When a schedule next runs after `now`, strictly later. A time of day is the
+ * person's wall-clock time on the day it runs, so the offset is read at the
+ * run, not now: `daily 9:00` stays 09:00 across a DST change.
  */
-export function nextRunAt(schedule: DotSchedule, now: number, offsetMinutes: number): number {
+export function nextRunAt(schedule: DotSchedule, now: number, offsetOf: Offset): number {
   if (schedule.kind === 'interval') return now + schedule.minutes * MIN
 
-  const local = now + offsetMinutes * MIN
+  const local = now + offsetOf(now) * MIN
   const midnight = Math.floor(local / (DAY_MIN * MIN)) * DAY_MIN * MIN
-  for (let ahead = 0; ahead <= 7; ahead += 1) {
+  for (let ahead = 0; ahead <= 8; ahead += 1) {
     const day = midnight + ahead * DAY_MIN * MIN
-    const at = day + schedule.minute * MIN
-    if (at > local && schedule.days.includes(new Date(day).getUTCDay())) {
-      return at - offsetMinutes * MIN
-    }
+    if (!schedule.days.includes(new Date(day).getUTCDay())) continue
+    const wall = day + schedule.minute * MIN
+    // Guess the instant with today's offset, then settle on the offset in force at it.
+    const guess = wall - offsetOf(now) * MIN
+    const at = wall - offsetOf(wall - offsetOf(guess) * MIN) * MIN
+    if (at > now) return at
   }
   throw new Error(`schedule has no day to run on: ${JSON.stringify(schedule)}`)
 }

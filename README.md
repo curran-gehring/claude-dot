@@ -84,11 +84,15 @@ Code resolves under your permission mode, the same as without the mod.
   `corrupt-<time>` key and reported loudly; it is never dropped.
 - That store is last-writer-wins with no compare-and-set, so every write holds a lock while it
   reads, changes and writes. The lock is a `plugins/dot.lock` directory that `mkdir` creates
-  atomically. A lock older than 30 seconds belongs to a session that died while holding it, and
-  is broken. A write that can't get the lock within 5 seconds fails and says so; nothing is
+  atomically; the holder writes its token inside. The holder checks the token again right before
+  it writes and before it releases. A lock older than 30 seconds belongs to a session that died
+  while holding it. It is broken by an atomic rename, and put back if it changed hands in the
+  meantime. A write that can't get the lock within 5 seconds fails and says so; nothing is
   half-saved. The lock is also what keeps two sessions from starting the same job. The guard
   reads the store fresh on every call, so a rule added in one session applies in every other one
   immediately.
+- Time-of-day schedules use your UTC offset at the time of the run, so `daily 9:00` stays at 9:00
+  across a daylight-saving change.
 - Each session writes a heartbeat. Work started by a session that closed is marked
   *interrupted*, so it can't block the next run.
 - The model in your main conversation gets a short section about your dot: its

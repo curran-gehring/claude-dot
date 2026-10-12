@@ -2,6 +2,7 @@ import type { DotData, DotInboxItem } from '../types'
 import { face, moodOf, needsYou } from './core/avatar'
 import { ago, formatWhen } from './core/ops'
 import { describeSchedule } from './core/schedule'
+import type { Offset } from './core/schedule'
 
 export const KIND_MARK: Record<DotInboxItem['kind'], string> = {
   question: '?', suggestion: '+', result: '·', handoff: '→', blocked: '×',
@@ -11,7 +12,7 @@ export function openInbox(data: DotData): DotInboxItem[] {
   return data.inbox.filter(item => !item.isDone)
 }
 
-export function responsibilitiesText(data: DotData, now: number, offset: number): string {
+export function responsibilitiesText(data: DotData, now: number, offset: Offset): string {
   if (data.responsibilities.length === 0) return 'It has no responsibilities yet. /dot assign <when> | <job> gives it one.'
 
   return data.responsibilities.map((one, at) => {
@@ -40,7 +41,7 @@ export function notesText(data: DotData, now: number): string {
   return data.notes.map((note, at) => `${at + 1}. ${note.text}  (${note.source}, ${ago(note.at, now)})`).join('\n')
 }
 
-export function statusText(data: DotData, now: number, offset: number): string {
+export function statusText(data: DotData, now: number, offset: Offset): string {
   if (data.dot === null) return 'No dot yet: /dot setup.'
   const running = data.activity.filter(one => one.status === 'running')
   const recent = data.activity.filter(one => one.status !== 'running').slice(-5).reverse()

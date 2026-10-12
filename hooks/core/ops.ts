@@ -1,6 +1,7 @@
 import type { DotActivity, DotActivityKind, DotData, DotInboxItem, DotNote, DotResponsibility, DotSchedule } from '../../types'
 import type { Report, ReportItem } from './report'
 import { clockOf, nextRunAt } from './schedule'
+import type { Offset } from './schedule'
 
 const MIN = 60_000
 const DAY = 24 * 60 * MIN
@@ -11,7 +12,7 @@ const MAX_DONE_INBOX = 50
 const MAX_FINISHED_ACTIVITY = 50
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-type Clock = { now: number; offsetMinutes: number }
+type Clock = { now: number; offsetOf: Offset }
 type Ids = { now: number; newId: () => string }
 
 export function addResponsibility(
@@ -25,7 +26,7 @@ export function addResponsibility(
     schedule: job.schedule,
     cwd: job.cwd,
     createdAt: at.now,
-    nextRunAt: job.schedule === null ? null : nextRunAt(job.schedule, at.now, at.offsetMinutes),
+    nextRunAt: job.schedule === null ? null : nextRunAt(job.schedule, at.now, at.offsetOf),
     lastRunAt: null,
     lastSummary: null,
     isPaused: false,
@@ -79,7 +80,7 @@ export function claimWork(
   const responsibilities = data.responsibilities.map(one =>
     one.id !== job.responsibilityId
       ? one
-      : { ...one, lastRunAt: at.now, nextRunAt: one.schedule === null ? null : nextRunAt(one.schedule, at.now, at.offsetMinutes) })
+      : { ...one, lastRunAt: at.now, nextRunAt: one.schedule === null ? null : nextRunAt(one.schedule, at.now, at.offsetOf) })
   const lastResearchAt = job.kind === 'research' ? { ...data.lastResearchAt, [job.cwd]: at.now } : data.lastResearchAt
 
   return { data: trimActivity({ ...data, responsibilities, lastResearchAt, activity: [...data.activity, activity] }), activity }
@@ -172,9 +173,9 @@ function trimActivity(data: DotData): DotData {
 }
 
 /** `09:00` today, `Tue 09:00` another day, in the person's local time. */
-export function formatWhen(at: number, now: number, offsetMinutes: number): string {
-  const local = at + offsetMinutes * MIN
-  const today = Math.floor((now + offsetMinutes * MIN) / DAY)
+export function formatWhen(at: number, now: number, offsetOf: Offset): string {
+  const local = at + offsetOf(at) * MIN
+  const today = Math.floor((now + offsetOf(now) * MIN) / DAY)
   const day = Math.floor(local / DAY)
   const clock = clockOf(Math.floor((local % DAY) / MIN))
 

@@ -4,6 +4,7 @@ import { emptyData } from '../hooks/core/data'
 import { addNotes, addResponsibility, ago, claimWork, dueResponsibilities, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
 
 const MIN = 60_000
+const UTC = () => 0
 const NOW = Date.UTC(2026, 9, 12, 8) // Monday 08:00 UTC
 const ids = (() => {
   let n = 0
@@ -11,7 +12,7 @@ const ids = (() => {
 })()
 
 function withJob(schedule: Parameters<typeof addResponsibility>[1]['schedule'] = { kind: 'interval', minutes: 60 }) {
-  return addResponsibility(emptyData(), { text: 'Check CI on main', schedule, cwd: 'C:/Dev/app' }, { now: NOW, offsetMinutes: 0, id: 'r1' })
+  return addResponsibility(emptyData(), { text: 'Check CI on main', schedule, cwd: 'C:/Dev/app' }, { now: NOW, offsetOf: UTC, id: 'r1' })
 }
 
 describe('responsibilities', () => {
@@ -24,14 +25,14 @@ describe('responsibilities', () => {
     const data = withJob()
     expect(dueResponsibilities(data, NOW)).toEqual([])
     expect(dueResponsibilities(data, NOW + 60 * MIN).map(r => r.id)).toEqual(['r1'])
-    const claimed = claimWork(data, { kind: 'work', responsibilityId: 'r1', label: 'Check CI on main', cwd: 'C:/Dev/app' }, { now: NOW + 60 * MIN, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
+    const claimed = claimWork(data, { kind: 'work', responsibilityId: 'r1', label: 'Check CI on main', cwd: 'C:/Dev/app' }, { now: NOW + 60 * MIN, offsetOf: UTC, id: 'a1', sessionId: 's1' })
     expect(claimed && dueResponsibilities(claimed.data, NOW + 61 * MIN)).toEqual([])
   })
 })
 
 describe('claimWork', () => {
   test('starts an activity and moves the schedule on', async () => {
-    const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW + 60 * MIN, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
+    const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW + 60 * MIN, offsetOf: UTC, id: 'a1', sessionId: 's1' })
     expect(claimed?.activity).toEqual(expect.objectContaining({ id: 'a1', status: 'running', sessionId: 's1', agentId: null }))
     expect(claimed?.data.responsibilities[0]?.nextRunAt).toBe(NOW + 120 * MIN)
     expect(claimed?.data.responsibilities[0]?.lastRunAt).toBe(NOW + 60 * MIN)
@@ -39,21 +40,21 @@ describe('claimWork', () => {
 
   test('refuses a second run of the same responsibility', async () => {
     const job = { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' } as const
-    const first = claimWork(withJob(), job, { now: NOW, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
-    expect(first && claimWork(first.data, job, { now: NOW, offsetMinutes: 0, id: 'a2', sessionId: 's2' })).toBeNull()
+    const first = claimWork(withJob(), job, { now: NOW, offsetOf: UTC, id: 'a1', sessionId: 's1' })
+    expect(first && claimWork(first.data, job, { now: NOW, offsetOf: UTC, id: 'a2', sessionId: 's2' })).toBeNull()
   })
 
   test('refuses a second research pass on the same project', async () => {
     const job = { kind: 'research', responsibilityId: null, label: 'research', cwd: 'C:/Dev/app' } as const
-    const first = claimWork(emptyData(), job, { now: NOW, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
-    expect(first && claimWork(first.data, job, { now: NOW, offsetMinutes: 0, id: 'a2', sessionId: 's1' })).toBeNull()
+    const first = claimWork(emptyData(), job, { now: NOW, offsetOf: UTC, id: 'a1', sessionId: 's1' })
+    expect(first && claimWork(first.data, job, { now: NOW, offsetOf: UTC, id: 'a2', sessionId: 's1' })).toBeNull()
     expect(first?.data.lastResearchAt['C:/Dev/app']).toBe(NOW)
   })
 })
 
 describe('finishWork', () => {
   const started = () => {
-    const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
+    const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetOf: UTC, id: 'a1', sessionId: 's1' })
     if (claimed === null) throw new Error('not claimed')
     return { ...claimed.data, activity: claimed.data.activity.map(a => ({ ...a, agentId: 'agent-7' })) }
   }
@@ -79,7 +80,7 @@ describe('finishWork', () => {
 })
 
 test('reapStale fails work whose session stopped checking in', async () => {
-  const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetMinutes: 0, id: 'a1', sessionId: 'gone' })
+  const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetOf: UTC, id: 'a1', sessionId: 'gone' })
   if (claimed === null) throw new Error('not claimed')
   const alive = { ...claimed.data, heartbeats: { gone: NOW } }
   expect(reapStale(alive, NOW + 2 * MIN).activity[0]?.status).toBe('running')
@@ -95,8 +96,8 @@ test('addNotes skips what it already knows', async () => {
 })
 
 test('formatWhen and ago read like a person would say them', async () => {
-  expect(formatWhen(NOW + 60 * MIN, NOW, 0)).toBe('09:00')
-  expect(formatWhen(NOW + 25 * 60 * MIN, NOW, 0)).toBe('Tue 09:00')
+  expect(formatWhen(NOW + 60 * MIN, NOW, UTC)).toBe('09:00')
+  expect(formatWhen(NOW + 25 * 60 * MIN, NOW, UTC)).toBe('Tue 09:00')
   expect(ago(NOW - 30_000, NOW)).toBe('just now')
   expect(ago(NOW - 5 * MIN, NOW)).toBe('5m ago')
   expect(ago(NOW - 3 * 60 * MIN, NOW)).toBe('3h ago')

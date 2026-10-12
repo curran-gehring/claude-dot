@@ -4,6 +4,7 @@ import type { DotData, DotIdentity, DotInboxItem, DotLook } from '../types'
 import { ACCESSORIES, COLORS, COLOR_HEX, DEFAULT_LOOK, EYES, GLASSES, SHAPES, face, handleFor, moodOf, needsYou } from './core/avatar'
 import { ago, formatWhen } from './core/ops'
 import { describeSchedule } from './core/schedule'
+import type { Offset } from './core/schedule'
 import { KIND_MARK, openInbox } from './text'
 
 /** What the drawings' buttons do; the hooks module owns every write. */
@@ -28,7 +29,7 @@ function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`
 }
 
-export function band(ui: Ui, data: DotData, now: number, offset: number, act: Actions): RenderElement {
+export function band(ui: Ui, data: DotData, now: number, offset: Offset, act: Actions): RenderElement {
   const { Box, Text, Button } = ui
   if (data.dot === null) {
     return (
@@ -69,7 +70,7 @@ export function band(ui: Ui, data: DotData, now: number, offset: number, act: Ac
   return <Box flexDirection="row">{row}</Box>
 }
 
-export function pane(ui: Ui, data: DotData, now: number, offset: number, user: string | undefined, act: Actions): RenderElement {
+export function pane(ui: Ui, data: DotData, now: number, offset: Offset, user: string | undefined, act: Actions): RenderElement {
   const { Box, Text, Button } = ui
   if (data.dot === null) {
     return (
