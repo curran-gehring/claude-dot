@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { emptyData } from '../hooks/core/data'
+import { moodOf } from '../hooks/core/avatar'
 import { addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
 
 const MIN = 60_000
@@ -118,4 +119,15 @@ test('the open inbox keeps the newest 100', async () => {
   const data = addInbox(emptyData(), items, { now: NOW, newId: ids })
   expect(data.inbox.length).toBe(100)
   expect(data.inbox[0]?.title).toBe('t30')
+})
+
+test('a report that needs the person keeps saying so after it is saved', async () => {
+  const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetOf: UTC, id: 'a1', sessionId: 's1' })
+  if (claimed === null) throw new Error('not claimed')
+  const started = { ...claimed.data, activity: claimed.data.activity.map(a => ({ ...a, agentId: 'ag' })) }
+  const withItem = finishWork(started, 'ag', { summary: 'deploy failed', needsYou: true, inbox: [{ kind: 'result', title: 'Deploy failed', body: 'b' }], notes: [] }, { now: NOW, newId: ids })
+  expect(withItem?.data.inbox[0]?.isUrgent).toBe(true)
+  expect(withItem && moodOf(withItem.data)).toBe('needs-you')
+  const bare = finishWork(started, 'ag', { summary: 'deploy failed', needsYou: true, inbox: [], notes: [] }, { now: NOW, newId: ids })
+  expect(bare?.data.inbox).toEqual([expect.objectContaining({ kind: 'result', title: 'Check CI: deploy failed', isUrgent: true })])
 })

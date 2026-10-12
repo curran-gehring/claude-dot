@@ -43,6 +43,7 @@ describe('decide', () => {
   test('research may only read', async () => {
     expect(decide(dot(), call({ tool: 'Edit', input: { file_path: 'C:/Dev/app/a.ts' }, isResearch: true }))).toEqual({ kind: 'answer', check: expect.objectContaining({ decision: 'deny' }) })
     expect(decide(dot(), call({ tool: 'Read', input: { file_path: 'C:/Dev/app/a.ts' }, isResearch: true }))).toEqual({ kind: 'answer', check: { decision: 'allow' } })
+    expect(decide(dot(), call({ tool: 'TodoWrite', input: { todos: [] }, isResearch: true }))).toEqual({ kind: 'answer', check: expect.objectContaining({ decision: 'deny' }) })
   })
 })
 

@@ -58,7 +58,7 @@ export function face(look: DotLook, mood: DotMood): string {
 const NEEDS_YOU: ReadonlySet<DotInboxItem['kind']> = new Set(['question', 'handoff', 'blocked'])
 
 export function needsYou(data: DotData): DotInboxItem[] {
-  return data.inbox.filter(item => !item.isDone && NEEDS_YOU.has(item.kind))
+  return data.inbox.filter(item => !item.isDone && (item.isUrgent || NEEDS_YOU.has(item.kind)))
 }
 
 export function moodOf(data: DotData): DotMood {

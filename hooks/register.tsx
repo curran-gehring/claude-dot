@@ -663,7 +663,7 @@ async function registerSurface($: $): Promise<void> {
     name: 'researcher',
     description: 'The dot\'s read-only proactive research. Spawned by the dot only.',
     prompt: RESEARCHER_SYSTEM,
-    tools: [...READ_ONLY_TOOLS].filter(tool => tool !== 'TodoWrite'),
+    tools: [...READ_ONLY_TOOLS],
     model: 'sonnet',
   })
 }

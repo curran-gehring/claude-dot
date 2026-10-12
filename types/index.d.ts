@@ -45,6 +45,8 @@ export type DotInboxItem = {
   kind: DotInboxKind
   title: string
   body: string
+  /** The report that filed it said the person must look soon. */
+  isUrgent: boolean
   isDone: boolean
 }
 

@@ -112,9 +112,13 @@ export function finishWork(
     responsibilities: data.responsibilities.map(one => (one.id === running.responsibilityId ? { ...one, lastSummary: summary } : one)),
   }
   if (isFailed) {
-    next = addInbox(next, [{ kind: 'result', title: `${running.label}: no report`, body: `The run finished but ${outcome.error}.` }], at)
+    next = addInbox(next, [{ kind: 'result', title: `${running.label}: no report`, body: `The run finished but ${outcome.error}.` }], at, true)
   } else {
-    next = addInbox(next, outcome.inbox, at)
+    // A report that needs the person files at least one item that says so, and keeps saying so.
+    const items = outcome.needsYou && outcome.inbox.length === 0
+      ? [{ kind: 'result' as const, title: `${running.label}: ${outcome.summary}`, body: outcome.summary }]
+      : outcome.inbox
+    next = addInbox(next, items, at, outcome.needsYou)
     next = addNotes(next, outcome.notes, running.kind === 'research' ? 'research' : 'work', at)
   }
 
@@ -145,8 +149,8 @@ export function reapStale(data: DotData, now: number): DotData {
   }
 }
 
-export function addInbox(data: DotData, items: readonly ReportItem[], at: Ids): DotData {
-  const added: DotInboxItem[] = items.map(item => ({ ...item, id: at.newId(), at: at.now, isDone: false }))
+export function addInbox(data: DotData, items: readonly ReportItem[], at: Ids, isUrgent = false): DotData {
+  const added: DotInboxItem[] = items.map(item => ({ ...item, id: at.newId(), at: at.now, isUrgent, isDone: false }))
   const inbox = [...data.inbox, ...added]
   const done = inbox.filter(item => item.isDone)
   const open = inbox.filter(item => !item.isDone)

@@ -28,7 +28,7 @@ test('handleFor', async () => {
 
 describe('moodOf', () => {
   const base = emptyData()
-  const item = { id: 'i', at: 0, kind: 'question', title: 't', body: 'b', isDone: false } as const
+  const item = { id: 'i', at: 0, kind: 'question', title: 't', body: 'b', isUrgent: false, isDone: false } as const
   const running = {
     id: 'a', kind: 'work', label: 'l', cwd: '.', responsibilityId: null, agentId: 'x', sessionId: 's',
     status: 'running', startedAt: 0, endedAt: null, summary: null,

@@ -15,7 +15,7 @@ export type Step =
   /** Have Auto-review read it first, then call `afterReview`. */
   | { kind: 'review'; rule: DotRule | undefined }
 
-export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'ToolSearch', 'TodoWrite'])
+export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'ToolSearch'])
 
 export type Call = {
   tool: string

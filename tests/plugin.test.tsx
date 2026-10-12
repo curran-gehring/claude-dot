@@ -117,7 +117,7 @@ describe('the band', () => {
   } as const
 
   test('shows the dot, what it watches and what needs you', async ($, on) => {
-    const inbox = [{ id: 'i1', at: NOW, kind: 'question', title: 'Revert #41?', body: 'b', isDone: false }] as const
+    const inbox = [{ id: 'i1', at: NOW, kind: 'question', title: 'Revert #41?', body: 'b', isUrgent: false, isDone: false }] as const
     given(on, stored({ inbox: [...inbox] }))
 
     for (const surface of ['terminal', 'desktop'] as const) {
@@ -147,7 +147,7 @@ describe('the panes', () => {
     }],
     rules: [rule('handoff', 'Bash(gh pr merge*)')],
     notes: [{ id: 'n1', at: NOW, text: 'Prefers pnpm', source: 'you' }],
-    inbox: [{ id: 'i1', at: NOW, kind: 'question', title: 'Revert #41?', body: 'It broke login.', isDone: false }],
+    inbox: [{ id: 'i1', at: NOW, kind: 'question', title: 'Revert #41?', body: 'It broke login.', isUrgent: false, isDone: false }],
   })
 
   test('the dot pane draws every section on every surface', async ($, on) => {

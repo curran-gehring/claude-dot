@@ -144,6 +144,7 @@ function inboxItem(raw: unknown, at: string): DotInboxItem {
     kind: oneOf(value.kind, ['question', 'suggestion', 'result', 'handoff', 'blocked'] as const, `${at}.kind`),
     title: str(value.title, `${at}.title`),
     body: str(value.body, `${at}.body`),
+    isUrgent: bool(value.isUrgent, `${at}.isUrgent`),
     isDone: bool(value.isDone, `${at}.isDone`),
   }
 }
