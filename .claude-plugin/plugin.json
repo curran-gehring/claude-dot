@@ -1,0 +1,40 @@
+{
+  "name": "dot",
+  "version": "0.1.0",
+  "description": "An always-on companion for Claude Code, after OpenAI's dots: a named avatar that keeps standing responsibilities, runs them on schedules in the background, does read-only proactive research, keeps notes you can read, and gates risky actions with Custom Rules and an independent Auto-review.",
+  "author": {
+    "name": "Curran Gehring",
+    "url": "https://github.com/curran-gehring"
+  },
+  "homepage": "https://github.com/curran-gehring/claude-dot",
+  "repository": "https://github.com/curran-gehring/claude-dot",
+  "license": "MIT",
+  "keywords": [
+    "agent",
+    "background",
+    "companion",
+    "auto-review",
+    "scheduler"
+  ],
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "proactiveMinutes": {
+      "type": "number",
+      "title": "Proactive research interval (minutes)",
+      "description": "How long between read-only research passes per project while you are idle. 0 turns proactive research off.",
+      "default": 120
+    },
+    "idleMinutes": {
+      "type": "number",
+      "title": "Idle minutes before research",
+      "description": "Proactive research only starts after you have been away from the prompt this long.",
+      "default": 10
+    },
+    "reviewModel": {
+      "type": "string",
+      "title": "Auto-review model",
+      "description": "The model that reviews consequential actions before they run.",
+      "default": "haiku"
+    }
+  }
+}

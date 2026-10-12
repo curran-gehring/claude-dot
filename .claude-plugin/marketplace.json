@@ -1,0 +1,15 @@
+{
+  "name": "claude-dot",
+  "description": "claude-dot: an always-on companion mod for Claude Code",
+  "owner": {
+    "name": "Curran Gehring",
+    "url": "https://github.com/curran-gehring"
+  },
+  "plugins": [
+    {
+      "name": "dot",
+      "source": "./",
+      "description": "An always-on companion for Claude Code, after OpenAI's dots."
+    }
+  ]
+}

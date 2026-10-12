@@ -1,0 +1,95 @@
+import { describe, expect, test } from 'claude-code/testing'
+
+import { parseCommand } from '../hooks/core/command'
+import { decodeData, emptyData } from '../hooks/core/data'
+import { parseReport } from '../hooks/core/report'
+import { parseVerdict } from '../hooks/core/review'
+
+describe('parseVerdict', () => {
+  test('reads the reviewer’s JSON, fenced or bare', async () => {
+    expect(parseVerdict('{"verdict":"ask","reason":"pushes to main"}')).toEqual({ verdict: 'ask', reason: 'pushes to main' })
+    expect(parseVerdict('Sure.\n```json\n{"verdict": "run", "reason": "asked for it"}\n```')).toEqual({ verdict: 'run', reason: 'asked for it' })
+  })
+
+  test('anything else is no verdict', async () => {
+    expect(parseVerdict('{"verdict":"maybe","reason":"x"}')).toBeNull()
+    expect(parseVerdict('run it')).toBeNull()
+    expect(parseVerdict('{"verdict":"run"}')).toBeNull()
+  })
+})
+
+describe('parseReport', () => {
+  test('takes the last JSON block of an agent’s answer', async () => {
+    const answer = [
+      'I checked CI.',
+      '```json',
+      '{"summary":"main is red: 2 failing tests","needsYou":true,',
+      ' "inbox":[{"kind":"question","title":"Revert #41?","body":"It broke login."}],',
+      ' "notes":["CI runs on GitHub Actions"]}',
+      '```',
+    ].join('\n')
+    expect(parseReport(answer)).toEqual({
+      summary: 'main is red: 2 failing tests',
+      needsYou: true,
+      inbox: [{ kind: 'question', title: 'Revert #41?', body: 'It broke login.' }],
+      notes: ['CI runs on GitHub Actions'],
+    })
+  })
+
+  test('defaults the optional parts', async () => {
+    expect(parseReport('{"summary":"all quiet"}')).toEqual({ summary: 'all quiet', needsYou: false, inbox: [], notes: [] })
+  })
+
+  test('says why a malformed report is refused', async () => {
+    expect(parseReport('no json here')).toEqual({ error: expect.stringContaining('no JSON') })
+    expect(parseReport('{"summary":"x","inbox":[{"kind":"gossip","title":"t","body":"b"}]}')).toEqual({ error: expect.stringContaining('gossip') })
+  })
+})
+
+describe('parseCommand', () => {
+  test('bare opens the dot', async () => {
+    expect(parseCommand('')).toEqual({ kind: 'open' })
+  })
+
+  test('assign with and without a schedule', async () => {
+    expect(parseCommand('assign weekdays 9:00 | Check CI on main')).toEqual({
+      kind: 'assign',
+      text: 'Check CI on main',
+      schedule: { kind: 'weekly', days: [1, 2, 3, 4, 5], minute: 540 },
+    })
+    expect(parseCommand('assign Keep the README current')).toEqual({ kind: 'assign', text: 'Keep the README current', schedule: null })
+    expect(parseCommand('assign whenever | x')).toEqual({ kind: 'error', text: expect.stringContaining('whenever') })
+  })
+
+  test('rules', async () => {
+    expect(parseCommand('rule handoff Bash(gh pr merge*)')).toEqual({ kind: 'rule', level: 'handoff', action: 'Bash(gh pr merge*)' })
+    expect(parseCommand('rule ask before replying to users')).toEqual({ kind: 'rule', level: 'ask', action: 'before replying to users' })
+    expect(parseCommand('rule sometimes x')).toEqual({ kind: 'error', text: expect.stringContaining('allow, when-asked, ask, handoff') })
+  })
+
+  test('numbered items', async () => {
+    expect(parseCommand('run 2')).toEqual({ kind: 'run', index: 2 })
+    expect(parseCommand('forget all')).toEqual({ kind: 'forget', index: 'all' })
+    expect(parseCommand('pause x')).toEqual({ kind: 'error', text: expect.stringContaining('number') })
+  })
+
+  test('unknown words say what exists', async () => {
+    expect(parseCommand('dance')).toEqual({ kind: 'error', text: expect.stringContaining('assign') })
+  })
+})
+
+describe('decodeData', () => {
+  test('nothing stored is a fresh dot', async () => {
+    expect(decodeData(undefined)).toEqual(emptyData())
+  })
+
+  test('a stored value round-trips', async () => {
+    const data = { ...emptyData(), notes: [{ id: 'n1', at: 1, text: 'prefers pnpm', source: 'you' }] }
+    expect(decodeData(JSON.parse(JSON.stringify(data)))).toEqual(data)
+  })
+
+  test('a malformed value throws instead of resetting quietly', async () => {
+    expect(() => decodeData({ version: 9 })).toThrow('version')
+    expect(() => decodeData({ ...emptyData(), notes: [{ id: 'n1' }] })).toThrow('notes[0]')
+  })
+})

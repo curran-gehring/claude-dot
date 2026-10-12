@@ -1,0 +1,104 @@
+import { describe, expect, test } from 'claude-code/testing'
+
+import { emptyData } from '../hooks/core/data'
+import { addNotes, addResponsibility, ago, claimWork, dueResponsibilities, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
+
+const MIN = 60_000
+const NOW = Date.UTC(2026, 9, 12, 8) // Monday 08:00 UTC
+const ids = (() => {
+  let n = 0
+  return () => `id${++n}`
+})()
+
+function withJob(schedule: Parameters<typeof addResponsibility>[1]['schedule'] = { kind: 'interval', minutes: 60 }) {
+  return addResponsibility(emptyData(), { text: 'Check CI on main', schedule, cwd: 'C:/Dev/app' }, { now: NOW, offsetMinutes: 0, id: 'r1' })
+}
+
+describe('responsibilities', () => {
+  test('a scheduled one gets its first run time; an unscheduled one none', async () => {
+    expect(withJob().responsibilities[0]?.nextRunAt).toBe(NOW + 60 * MIN)
+    expect(withJob(null).responsibilities[0]?.nextRunAt).toBeNull()
+  })
+
+  test('due means scheduled, not paused, not running, and its time has come', async () => {
+    const data = withJob()
+    expect(dueResponsibilities(data, NOW)).toEqual([])
+    expect(dueResponsibilities(data, NOW + 60 * MIN).map(r => r.id)).toEqual(['r1'])
+    const claimed = claimWork(data, { kind: 'work', responsibilityId: 'r1', label: 'Check CI on main', cwd: 'C:/Dev/app' }, { now: NOW + 60 * MIN, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
+    expect(claimed && dueResponsibilities(claimed.data, NOW + 61 * MIN)).toEqual([])
+  })
+})
+
+describe('claimWork', () => {
+  test('starts an activity and moves the schedule on', async () => {
+    const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW + 60 * MIN, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
+    expect(claimed?.activity).toEqual(expect.objectContaining({ id: 'a1', status: 'running', sessionId: 's1', agentId: null }))
+    expect(claimed?.data.responsibilities[0]?.nextRunAt).toBe(NOW + 120 * MIN)
+    expect(claimed?.data.responsibilities[0]?.lastRunAt).toBe(NOW + 60 * MIN)
+  })
+
+  test('refuses a second run of the same responsibility', async () => {
+    const job = { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' } as const
+    const first = claimWork(withJob(), job, { now: NOW, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
+    expect(first && claimWork(first.data, job, { now: NOW, offsetMinutes: 0, id: 'a2', sessionId: 's2' })).toBeNull()
+  })
+
+  test('refuses a second research pass on the same project', async () => {
+    const job = { kind: 'research', responsibilityId: null, label: 'research', cwd: 'C:/Dev/app' } as const
+    const first = claimWork(emptyData(), job, { now: NOW, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
+    expect(first && claimWork(first.data, job, { now: NOW, offsetMinutes: 0, id: 'a2', sessionId: 's1' })).toBeNull()
+    expect(first?.data.lastResearchAt['C:/Dev/app']).toBe(NOW)
+  })
+})
+
+describe('finishWork', () => {
+  const started = () => {
+    const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetMinutes: 0, id: 'a1', sessionId: 's1' })
+    if (claimed === null) throw new Error('not claimed')
+    return { ...claimed.data, activity: claimed.data.activity.map(a => ({ ...a, agentId: 'agent-7' })) }
+  }
+
+  test('a report lands in the activity, the responsibility, the inbox and the notes', async () => {
+    const report = { summary: 'main is red', needsYou: true, inbox: [{ kind: 'question' as const, title: 'Revert #41?', body: 'It broke login.' }], notes: ['CI is GitHub Actions'] }
+    const done = finishWork(started(), 'agent-7', report, { now: NOW + 5 * MIN, newId: ids })
+    expect(done?.activity).toEqual(expect.objectContaining({ status: 'done', summary: 'main is red', endedAt: NOW + 5 * MIN }))
+    expect(done?.data.responsibilities[0]?.lastSummary).toBe('main is red')
+    expect(done?.data.inbox).toEqual([expect.objectContaining({ kind: 'question', title: 'Revert #41?', isDone: false })])
+    expect(done?.data.notes).toEqual([expect.objectContaining({ text: 'CI is GitHub Actions', source: 'work' })])
+  })
+
+  test('a refused report fails the activity and says why in the inbox', async () => {
+    const done = finishWork(started(), 'agent-7', { error: 'the agent ended with no JSON report' }, { now: NOW, newId: ids })
+    expect(done?.activity.status).toBe('failed')
+    expect(done?.data.inbox[0]).toEqual(expect.objectContaining({ kind: 'result', body: expect.stringContaining('no JSON report') }))
+  })
+
+  test('an agent that is not the dot’s is left alone', async () => {
+    expect(finishWork(started(), 'someone-else', { error: 'x' }, { now: NOW, newId: ids })).toBeNull()
+  })
+})
+
+test('reapStale fails work whose session stopped checking in', async () => {
+  const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetMinutes: 0, id: 'a1', sessionId: 'gone' })
+  if (claimed === null) throw new Error('not claimed')
+  const alive = { ...claimed.data, heartbeats: { gone: NOW } }
+  expect(reapStale(alive, NOW + 2 * MIN).activity[0]?.status).toBe('running')
+  const reaped = reapStale(alive, NOW + 10 * MIN)
+  expect(reaped.activity[0]).toEqual(expect.objectContaining({ status: 'failed', summary: expect.stringContaining('session closed') }))
+  expect(reaped.heartbeats).toEqual({ gone: NOW })
+  expect(reapStale(alive, NOW + 2 * 24 * 60 * MIN).heartbeats).toEqual({})
+})
+
+test('addNotes skips what it already knows', async () => {
+  const once = addNotes(emptyData(), ['Prefers pnpm'], 'you', { now: NOW, newId: ids })
+  expect(addNotes(once, ['prefers pnpm ', 'Deploys on Render'], 'work', { now: NOW, newId: ids }).notes.map(n => n.text)).toEqual(['Prefers pnpm', 'Deploys on Render'])
+})
+
+test('formatWhen and ago read like a person would say them', async () => {
+  expect(formatWhen(NOW + 60 * MIN, NOW, 0)).toBe('09:00')
+  expect(formatWhen(NOW + 25 * 60 * MIN, NOW, 0)).toBe('Tue 09:00')
+  expect(ago(NOW - 30_000, NOW)).toBe('just now')
+  expect(ago(NOW - 5 * MIN, NOW)).toBe('5m ago')
+  expect(ago(NOW - 3 * 60 * MIN, NOW)).toBe('3h ago')
+  expect(ago(NOW - 2 * 24 * 60 * MIN, NOW)).toBe('2d ago')
+})
