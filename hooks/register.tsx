@@ -289,37 +289,50 @@ async function attach($: $, activityId: string, agentId: string): Promise<boolea
   }
   session.unattached.delete(activityId)
   const finished = session.unclaimed.get(agentId)
-  if (finished === undefined) return false
-  session.unclaimed.delete(agentId)
-  await collect($, agentId, finished.answer, finished.isAborted)
-  return true
+  return finished !== undefined && collect($, agentId, finished.answer, finished.isAborted)
 }
 
-async function collect($: $, agentId: string, answer: string, isAborted: boolean): Promise<void> {
+/** Keeps an agent's answer until it is saved: bounded, oldest first out. */
+function hold(agentId: string, answer: string, isAborted: boolean): void {
+  session.unclaimed.set(agentId, { answer, isAborted })
+  if (session.unclaimed.size > MAX_UNCLAIMED) session.unclaimed.delete(session.unclaimed.keys().next().value ?? '')
+}
+
+/**
+ * Saves a finished agent's report on its activity. The answer stays held
+ * (`unclaimed`) until that save succeeds: when the activity is not known yet
+ * (its id not saved) or the save fails, it is kept for `attach` or the next
+ * tick to try again. True once saved.
+ */
+async function collect($: $, agentId: string, answer: string, isAborted: boolean): Promise<boolean> {
+  hold(agentId, answer, isAborted)
   const known = await load($)
-  if (!known.activity.some(one => one.status === 'running' && one.agentId === agentId)) {
-    // Possibly a dot agent that finished before its id was saved: kept for startJob to collect.
-    session.unclaimed.set(agentId, { answer, isAborted })
-    if (session.unclaimed.size > MAX_UNCLAIMED) session.unclaimed.delete(session.unclaimed.keys().next().value ?? '')
-    return
-  }
+  if (!known.activity.some(one => one.status === 'running' && one.agentId === agentId)) return false
 
   const now = await $.clock.now()
   const outcome = isAborted ? { error: 'it was stopped before it finished' } : parseReport(answer)
   const held: { summary: string | null; isFailed: boolean } = { summary: null, isFailed: false }
-  const data = await mutate($, d => {
-    const finished = finishWork(d, agentId, outcome, { now, newId })
-    held.summary = finished?.activity.summary ?? null
-    held.isFailed = finished?.activity.status === 'failed'
-    return finished?.data ?? d
-  })
-  if (held.summary === null) return
+  let data: DotData
+  try {
+    data = await mutate($, d => {
+      const finished = finishWork(d, agentId, outcome, { now, newId })
+      held.summary = finished?.activity.summary ?? null
+      held.isFailed = finished?.activity.status === 'failed'
+      return finished?.data ?? d
+    })
+  } catch (error) {
+    $.ui.log(`dot: could not save agent ${agentId}'s report yet, will retry: ${messageOf(error)}`, { to: 'debug' })
+    return false
+  }
+  session.unclaimed.delete(agentId)
+  if (held.summary === null) return true
 
   const name = nameOf(data)
   $.ui.toast(`${name}: ${held.summary}`)
   if (held.isFailed || ('needsYou' in outcome && outcome.needsYou)) {
     void $.ui.notify(held.summary, { title: name })
   }
+  return true
 }
 
 async function tick($: $): Promise<void> {
@@ -328,6 +341,10 @@ async function tick($: $): Promise<void> {
   try {
     const now = await $.clock.now()
     for (const [activityId, agentId] of [...session.unattached]) await attach($, activityId, agentId)
+    const running = new Set((await load($)).activity.filter(one => one.status === 'running').map(one => one.agentId))
+    for (const [agentId, held] of [...session.unclaimed]) {
+      if (running.has(agentId)) await collect($, agentId, held.answer, held.isAborted)
+    }
     const data = await mutate($, d => reapStale({ ...d, heartbeats: { ...d.heartbeats, [session.id]: now } }, now))
     if (data.dot === null || data.settings.isAsleep || !session.isInteractive) return
 
