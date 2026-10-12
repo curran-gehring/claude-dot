@@ -5,6 +5,12 @@ export type ReportItem = { kind: DotInboxKind; title: string; body: string }
 export type Report = { summary: string; needsYou: boolean; inbox: ReportItem[]; notes: string[] }
 
 const KINDS: readonly DotInboxKind[] = ['question', 'suggestion', 'result', 'handoff', 'blocked']
+/** What one report may put in the shared store: the rest is dropped and said in the summary. */
+export const LIMITS = { inbox: 10, notes: 20, summary: 300, title: 200, body: 4_000, note: 500 } as const
+
+function clip(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
+}
 
 /** What a worker or researcher reported at the end of its answer, or why it is refused. */
 export function parseReport(answer: string): Report | { error: string } {
@@ -28,7 +34,19 @@ export function parseReport(answer: string): Report | { error: string } {
     items.push({ kind: kind as DotInboxKind, title, body })
   }
 
-  return { summary: summary.trim(), needsYou, inbox: items, notes: notes.filter(note => note.trim() !== '') }
+  const kept = notes.filter(note => note.trim() !== '')
+  const dropped = [
+    items.length > LIMITS.inbox ? `${items.length - LIMITS.inbox} more inbox items` : '',
+    kept.length > LIMITS.notes ? `${kept.length - LIMITS.notes} more notes` : '',
+  ].filter(Boolean)
+  const said = dropped.length === 0 ? summary.trim() : `${summary.trim()} (${dropped.join(' and ')} were not kept)`
+
+  return {
+    summary: clip(said, LIMITS.summary),
+    needsYou,
+    inbox: items.slice(0, LIMITS.inbox).map(item => ({ kind: item.kind, title: clip(item.title, LIMITS.title), body: clip(item.body, LIMITS.body) })),
+    notes: kept.slice(0, LIMITS.notes).map(note => clip(note, LIMITS.note)),
+  }
 }
 
 export const REPORT_FORMAT = [
@@ -38,4 +56,5 @@ export const REPORT_FORMAT = [
   ' "inbox": [{"kind": "question|suggestion|result|handoff|blocked", "title": "<short>", "body": "<what and why, with links or paths>"}],',
   ' "notes": ["<a durable fact worth remembering next time: a preference, a decision, where something lives>"]}',
   'Leave inbox empty when there is nothing worth the person\'s attention. Notes are facts, not a log of what you did.',
+  `At most ${LIMITS.inbox} inbox items and ${LIMITS.notes} notes are kept; keep a body under ${LIMITS.body} characters and a note under ${LIMITS.note}.`,
 ].join('\n')

@@ -40,6 +40,33 @@ describe('parseReport', () => {
     expect(parseReport('{"summary":"all quiet"}')).toEqual({ summary: 'all quiet', needsYou: false, inbox: [], notes: [] })
   })
 
+  test('an oversized report is held to its limits, and says what it dropped', async () => {
+    const item = (at: number) => ({ kind: 'result', title: `t${at}`, body: 'b' })
+    const report = parseReport(JSON.stringify({
+      summary: 's',
+      inbox: Array.from({ length: 15 }, (_, at) => item(at)),
+      notes: Array.from({ length: 30 }, (_, at) => `n${at}`),
+    }))
+    if ('error' in report) throw new Error(report.error)
+    expect(report.inbox.length).toBe(10)
+    expect(report.notes.length).toBe(20)
+    expect(report.summary).toBe('s (5 more inbox items and 10 more notes were not kept)')
+  })
+
+  test('long text is clipped', async () => {
+    const report = parseReport(JSON.stringify({
+      summary: 'x'.repeat(1_000),
+      inbox: [{ kind: 'result', title: 'y'.repeat(500), body: 'z'.repeat(10_000) }],
+      notes: ['w'.repeat(2_000)],
+    }))
+    if ('error' in report) throw new Error(report.error)
+    expect(report.summary.length).toBeLessThanOrEqual(300)
+    expect(report.inbox[0]?.title.length).toBeLessThanOrEqual(200)
+    expect(report.inbox[0]?.body.length).toBeLessThanOrEqual(4_000)
+    expect(report.notes[0]?.length).toBeLessThanOrEqual(500)
+    expect(report.inbox[0]?.body.endsWith('…')).toBe(true)
+  })
+
   test('says why a malformed report is refused', async () => {
     expect(parseReport('no json here')).toEqual({ error: expect.stringContaining('no JSON') })
     expect(parseReport('{"summary":"x","inbox":[{"kind":"gossip","title":"t","body":"b"}]}')).toEqual({ error: expect.stringContaining('gossip') })

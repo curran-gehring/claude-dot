@@ -11,6 +11,8 @@ const HEARTBEAT_STALE = 5 * MIN
 const MAX_RUN = 3 * 60 * MIN
 const MAX_NOTES = 200
 const MAX_DONE_INBOX = 50
+/** Open items kept: past this the oldest give way, so no run can grow the store without bound. */
+const MAX_OPEN_INBOX = 100
 const MAX_FINISHED_ACTIVITY = 50
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -147,7 +149,11 @@ export function addInbox(data: DotData, items: readonly ReportItem[], at: Ids): 
   const added: DotInboxItem[] = items.map(item => ({ ...item, id: at.newId(), at: at.now, isDone: false }))
   const inbox = [...data.inbox, ...added]
   const done = inbox.filter(item => item.isDone)
-  const dropped = new Set(done.slice(0, Math.max(0, done.length - MAX_DONE_INBOX)).map(item => item.id))
+  const open = inbox.filter(item => !item.isDone)
+  const dropped = new Set([
+    ...done.slice(0, Math.max(0, done.length - MAX_DONE_INBOX)),
+    ...open.slice(0, Math.max(0, open.length - MAX_OPEN_INBOX)),
+  ].map(item => item.id))
 
   return { ...data, inbox: inbox.filter(item => !dropped.has(item.id)) }
 }

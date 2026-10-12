@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { emptyData } from '../hooks/core/data'
-import { addNotes, addResponsibility, ago, claimWork, dueResponsibilities, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
+import { addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
 
 const MIN = 60_000
 const UTC = () => 0
@@ -111,4 +111,11 @@ test('formatWhen and ago read like a person would say them', async () => {
   expect(ago(NOW - 5 * MIN, NOW)).toBe('5m ago')
   expect(ago(NOW - 3 * 60 * MIN, NOW)).toBe('3h ago')
   expect(ago(NOW - 2 * 24 * 60 * MIN, NOW)).toBe('2d ago')
+})
+
+test('the open inbox keeps the newest 100', async () => {
+  const items = Array.from({ length: 130 }, (_, at) => ({ kind: 'result' as const, title: `t${at}`, body: 'b' }))
+  const data = addInbox(emptyData(), items, { now: NOW, newId: ids })
+  expect(data.inbox.length).toBe(100)
+  expect(data.inbox[0]?.title).toBe('t30')
 })
