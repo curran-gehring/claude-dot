@@ -158,3 +158,16 @@ test('a claim whose agent never started is rolled back', async () => {
   if (research === null) throw new Error('not claimed')
   expect(abandonClaim(research.data, research.activity.id, research.previous, 'x', at.now).lastResearchAt).toEqual({})
 })
+
+test('a rollback leaves alone what changed after its claim', async () => {
+  const at = { now: NOW + 60 * MIN, offsetOf: UTC, id: 'a1', sessionId: 's1' }
+  const work = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, at)
+  if (work === null) throw new Error('not claimed')
+  // Another session reaped this run and started a new one later.
+  const reaped = reapStale({ ...work.data, heartbeats: {} }, at.now + 10 * MIN)
+  const rerun = claimWork(reaped, { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { ...at, now: at.now + 10 * MIN, id: 'a2', sessionId: 's2' })
+  if (rerun === null) throw new Error('not claimed')
+  const rolled = abandonClaim(rerun.data, 'a1', work.previous, 'could not start', at.now + 11 * MIN)
+  expect(rolled.responsibilities[0]).toEqual(expect.objectContaining({ lastRunAt: at.now + 10 * MIN, nextRunAt: at.now + 70 * MIN }))
+  expect(rolled.activity.find(a => a.id === 'a2')?.status).toBe('running')
+})

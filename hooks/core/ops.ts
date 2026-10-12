@@ -116,17 +116,21 @@ export type Previous = {
 /**
  * Undoes a claim whose agent never started: the activity fails with
  * `reason`, and its responsibility's run times and the project's research
- * time go back to what they were, so the job is due again.
+ * time go back to what they were, so the job is due again. Only what this
+ * claim set is undone: nothing once the activity is no longer running (another
+ * session reaped it), and no time that has moved on since the claim.
  */
 export function abandonClaim(data: DotData, activityId: string, previous: Previous, reason: string, now: number): DotData {
   const activity = data.activity.find(one => one.id === activityId)
+  if (activity === undefined || activity.status !== 'running') return data
   const failed = failWork(data, activityId, reason, now)
-  if (activity === undefined) return failed
+  const claimedAt = activity.startedAt
   const responsibilities = previous.run === null
     ? failed.responsibilities
-    : failed.responsibilities.map(one => (one.id === activity.responsibilityId ? { ...one, ...previous.run } : one))
+    : failed.responsibilities.map(one =>
+        one.id === activity.responsibilityId && one.lastRunAt === claimedAt ? { ...one, ...previous.run } : one)
   const lastResearchAt = { ...failed.lastResearchAt }
-  if (activity.kind === 'research') {
+  if (activity.kind === 'research' && lastResearchAt[activity.cwd] === claimedAt) {
     if (previous.researchAt === null) delete lastResearchAt[activity.cwd]
     else lastResearchAt[activity.cwd] = previous.researchAt
   }

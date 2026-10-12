@@ -293,6 +293,11 @@ async function startJob($: $, job: Job, prompt: string, isScheduled = false): Pr
     return `${job.label} ${reason}`
   }
 
+  if (session.isEnded) {
+    // The session ended while the agent was starting: it ends with the session, so the run is not kept.
+    await mutate($, d => abandonClaim(d, id, previous, 'not kept: its session ended while it started', now))
+    return `${job.label} was not kept: the session has ended.`
+  }
   session.unattached.set(id, spawned.agentId)
   const isFinished = await attach($, id, spawned.agentId)
   if (isFinished) return `${nameOf(data)} finished: ${job.label}`
