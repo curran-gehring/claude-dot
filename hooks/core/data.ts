@@ -10,6 +10,7 @@ import type {
 } from '../../types'
 import { ACCESSORIES, COLORS, EYES, GLASSES, SHAPES } from './avatar'
 import { isObject } from './json'
+import { MAX_INTERVAL_MINUTES } from './schedule'
 
 export function emptyData(): DotData {
   return {
@@ -83,7 +84,7 @@ function schedule(raw: unknown, at: string): DotSchedule | null {
   const value = obj(raw, at)
   if (value.kind === 'interval') {
     const minutes = num(value.minutes, `${at}.minutes`)
-    if (!Number.isInteger(minutes) || minutes < 1) throw new DotDataError(`${at}.minutes is ${minutes}, not a whole number of minutes from 1`)
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > MAX_INTERVAL_MINUTES) throw new DotDataError(`${at}.minutes is ${minutes}, not a whole number of minutes from 1 to a year`)
     return { kind: 'interval', minutes }
   }
   if (value.kind === 'weekly') {

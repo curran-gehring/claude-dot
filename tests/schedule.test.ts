@@ -28,6 +28,9 @@ describe('parseSchedule', () => {
     expect(parseSchedule('whenever')).toEqual({ error: expect.stringContaining('whenever') })
     expect(parseSchedule('every 0m')).toEqual({ error: expect.stringContaining('every 0m') })
     expect(parseSchedule('daily 25:00')).toEqual({ error: expect.stringContaining('25:00') })
+    expect(parseSchedule('every 999999999999999999999999h')).toEqual({ error: expect.stringContaining('a year') })
+    expect(parseSchedule('every 400d')).toEqual({ error: expect.stringContaining('a year') })
+    expect(parseSchedule('every 365d')).toEqual({ kind: 'interval', minutes: 365 * 1440 })
   })
 })
 
@@ -39,6 +42,21 @@ describe('nextRunAt', () => {
     const daily9: DotSchedule = { kind: 'weekly', days: [0, 1, 2, 3, 4, 5, 6], minute: 540 }
     // Saturday 10:00 EDT (14:00 UTC): the next 09:00 is Sunday 09:00 EST, 14:00 UTC.
     expect(nextRunAt(daily9, Date.UTC(2026, 9, 31, 14), eastern)).toBe(Date.UTC(2026, 10, 1, 14))
+    // Sunday 01:00 EDT (05:00 UTC), an hour before the change: still Sunday 09:00 EST.
+    expect(nextRunAt(daily9, Date.UTC(2026, 10, 1, 5), eastern)).toBe(Date.UTC(2026, 10, 1, 14))
+    // Sunday 08:00 EST (13:00 UTC), after the change: Sunday 09:00 EST, not an hour early.
+    expect(nextRunAt(daily9, Date.UTC(2026, 10, 1, 13), eastern)).toBe(Date.UTC(2026, 10, 1, 14))
+    // Saturday 08:00 EDT (12:00 UTC): Saturday 09:00 EDT is 13:00 UTC.
+    expect(nextRunAt(daily9, Date.UTC(2026, 9, 31, 12), eastern)).toBe(Date.UTC(2026, 9, 31, 13))
+  })
+
+  test('a time of day keeps its local time across spring forward', async () => {
+    // US Eastern springs forward at 2026-03-08 07:00 UTC: -300 before, -240 after.
+    const SPRING = Date.UTC(2026, 2, 8, 7)
+    const eastern = (at: number) => (at < SPRING ? -300 : -240)
+    const daily9: DotSchedule = { kind: 'weekly', days: [0, 1, 2, 3, 4, 5, 6], minute: 540 }
+    // Saturday 10:00 EST (15:00 UTC): Sunday 09:00 EDT is 13:00 UTC.
+    expect(nextRunAt(daily9, Date.UTC(2026, 2, 7, 15), eastern)).toBe(Date.UTC(2026, 2, 8, 13))
   })
 
   test('an interval runs that long after now', async () => {

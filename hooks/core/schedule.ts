@@ -2,6 +2,8 @@ import type { DotSchedule } from '../../types'
 
 const MIN = 60_000
 const DAY_MIN = 24 * 60
+/** The longest interval a schedule takes: a year. */
+export const MAX_INTERVAL_MINUTES = 366 * DAY_MIN
 const DAY_NAMES = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]
 const WEEKDAYS = [1, 2, 3, 4, 5]
@@ -22,7 +24,9 @@ export function parseSchedule(text: string): DotSchedule | { error: string } {
   if (every) {
     const per = UNIT_MINUTES[every[2] ?? '']
     const count = Number(every[1])
-    return per !== undefined && count > 0 ? { kind: 'interval', minutes: count * per } : refuse
+    if (per === undefined || count <= 0) return refuse
+    const minutes = count * per
+    return minutes <= MAX_INTERVAL_MINUTES ? { kind: 'interval', minutes } : { error: `"${text.trim()}" is longer than a year` }
   }
 
   const timed = /^([a-z,]+)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/.exec(said)
@@ -69,9 +73,9 @@ export function nextRunAt(schedule: DotSchedule, now: number, offsetOf: Offset):
     const day = midnight + ahead * DAY_MIN * MIN
     if (!schedule.days.includes(new Date(day).getUTCDay())) continue
     const wall = day + schedule.minute * MIN
-    // Guess the instant with today's offset, then settle on the offset in force at it.
-    const guess = wall - offsetOf(now) * MIN
-    const at = wall - offsetOf(wall - offsetOf(guess) * MIN) * MIN
+    // The instant whose local time is `wall`: start from today's offset and settle on the offset in force there.
+    let at = wall - offsetOf(now) * MIN
+    for (let step = 0; step < 3; step += 1) at = wall - offsetOf(at) * MIN
     if (at > now) return at
   }
   throw new Error(`schedule has no day to run on: ${JSON.stringify(schedule)}`)

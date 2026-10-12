@@ -97,6 +97,7 @@ describe('decodeData', () => {
     })
     expect(() => decodeData(withSchedule({ kind: 'interval', minutes: 0 }))).toThrow('minutes')
     expect(() => decodeData(withSchedule({ kind: 'interval', minutes: 1.5 }))).toThrow('minutes')
+    expect(() => decodeData(withSchedule({ kind: 'interval', minutes: 1e24 }))).toThrow('minutes')
     expect(() => decodeData(withSchedule({ kind: 'weekly', days: [1], minute: 1440 }))).toThrow('minute')
     expect(() => decodeData(withSchedule({ kind: 'weekly', days: [7], minute: 540 }))).toThrow('days')
     expect(() => decodeData(withSchedule({ kind: 'weekly', days: [], minute: 540 }))).toThrow('days')

@@ -81,11 +81,13 @@ export function pane(ui: Ui, data: DotData, now: number, offset: Offset, user: s
     )
   }
 
-  const section = (title: string, body: RenderElement[], empty: string): RenderElement[] => [
-    <Text> </Text>,
-    <Text bold>{title}</Text>,
-    ...(body.length > 0 ? body : [<Text dimColor>{empty}</Text>]),
-  ]
+  // One keyed box per section, so its rows never sit as unkeyed siblings of another section's.
+  const section = (title: string, body: RenderElement[], empty: string): RenderElement => (
+    <Box key={`section-${title.split(' ')[0]}`} flexDirection="column" marginTop={1}>
+      <Text bold>{title}</Text>
+      {body.length > 0 ? body : <Text dimColor>{empty}</Text>}
+    </Box>
+  )
   const need = new Set(needsYou(data).map(item => item.id))
   const inbox = openInbox(data).sort((a, b) => Number(need.has(b.id)) - Number(need.has(a.id)))
   const running = data.activity.filter(one => one.status === 'running')
