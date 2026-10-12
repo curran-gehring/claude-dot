@@ -109,10 +109,30 @@ export function isConsequential(tool: string, input: unknown, cwd: string): bool
   return false
 }
 
+/** Whether `path` lies under `dir` once `.` and `..` are resolved; a relative path never does. */
 function isInside(path: string, dir: string): boolean {
-  const root = slashes(dir).toLowerCase().replace(/\/$/, '')
+  const root = resolved(dir)
+  const target = resolved(path)
 
-  return slashes(path).toLowerCase().startsWith(`${root}/`)
+  return root !== null && target !== null && target.startsWith(`${root}/`)
+}
+
+/** An absolute path with `.` and `..` resolved, lowercased; null when relative or climbing above its root. */
+function resolved(path: string): string | null {
+  const [head = '', ...rest] = slashes(path).toLowerCase().split('/')
+  const isAbsolute = head === '' || /^[a-z]:$/.test(head)
+  if (!isAbsolute) return null
+  const parts: string[] = []
+  for (const part of rest) {
+    if (part === '' || part === '.') continue
+    if (part === '..') {
+      if (parts.pop() === undefined) return null
+      continue
+    }
+    parts.push(part)
+  }
+
+  return [head, ...parts].join('/')
 }
 
 function slashes(path: string): string {

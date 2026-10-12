@@ -73,6 +73,17 @@ describe('isConsequential', () => {
     expect(isConsequential('Edit', { file_path: 'C:\\Dev\\oregano\\src\\b.ts' }, CWD)).toBe(false)
   })
 
+  test('a path that climbs out of the project with .. is outside it', async () => {
+    expect(isConsequential('Write', { file_path: 'C:/Dev/oregano/../secrets.txt' }, CWD)).toBe(true)
+    expect(isConsequential('Write', { file_path: 'C:\\Dev\\oregano\\src\\..\\..\\other\\a.ts' }, CWD)).toBe(true)
+    expect(isConsequential('Edit', { file_path: 'C:/Dev/oregano/src/../lib/./a.ts' }, CWD)).toBe(false)
+    expect(isConsequential('Edit', { file_path: 'C:/Dev/oregano-evil/a.ts' }, CWD)).toBe(true)
+  })
+
+  test('a relative path is not trusted to be inside', async () => {
+    expect(isConsequential('Write', { file_path: 'src/a.ts' }, CWD)).toBe(true)
+  })
+
   test('connector tools that send or change things are, the dot’s own are not', async () => {
     expect(isConsequential('mcp__claude_ai_Gmail__send_message', {}, CWD)).toBe(true)
     expect(isConsequential('mcp__claude_ai_Google_Drive__trash_file', {}, CWD)).toBe(true)
