@@ -35,12 +35,6 @@
       "title": "Auto-review model",
       "description": "The model that reviews consequential actions before they run.",
       "default": "haiku"
-    },
-    "settleMs": {
-      "type": "number",
-      "title": "Store settle time (ms)",
-      "description": "After writing, how long the dot waits before checking that another open session did not overwrite the write at the same moment (it redoes the write if one did).",
-      "default": 300
     }
   }
 }

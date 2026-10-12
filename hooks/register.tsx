@@ -27,8 +27,11 @@ const DATA = atom({ plugin: 'dot', key: 'data' } as const, null)
 const DRAFT = atom({ plugin: 'dot', key: 'draft' } as const, null)
 
 const MIN = 60_000
-/** Writes remembered in a value's lineage: far more than can land within one settle. */
-const LINEAGE = 64
+/** A lock this old was left by a session that died while holding it. */
+const LOCK_STALE_MS = 30_000
+/** How long a write waits for the lock before it fails loudly. */
+const LOCK_WAIT_MS = 5_000
+const LOCK_POLL_MS = 50
 const PANE = 'dot'
 const LOOK_PANE = 'dot-look'
 const OWN_TOOL = 'mcp__dot__'
@@ -39,8 +42,12 @@ type $ = EngineInterface
 
 // The module's own memory: lost on a reload, so everything that matters is
 // also in the store (each activity carries its agent and its session).
-const config = { proactiveMinutes: 120, idleMinutes: 10, reviewModel: 'haiku', settleMs: 300 }
+const config = { proactiveMinutes: 120, idleMinutes: 10, reviewModel: 'haiku' }
 const session = { id: 'unknown', cwd: '', isInteractive: false, lastPersonAt: 0, isMainTurnRunning: false, isTicking: false }
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 function nameOf(data: DotData): string {
   return data.dot?.name ?? 'Your dot'
@@ -69,30 +76,59 @@ async function load($: $): Promise<DotData> {
   }
 }
 
+/** Where the lock lives: one directory every session on this machine sees. */
+async function lockPath($: $): Promise<string> {
+  const config = await $.env.get('CLAUDE_CONFIG_DIR')
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME'))
+  return `${config ?? `${home}/.claude`}/plugins/dot.lock`.replace(/\\/g, '/')
+}
+
+/** `mkdir` or `rmdir` on the host: true when it succeeded. */
+async function directory($: $, verb: 'mkdir' | 'rmdir', path: string): Promise<boolean> {
+  const isWindows = (await $.env.get('ComSpec')) !== undefined
+  const argv = isWindows ? ['cmd', '/d', '/c', verb, path.replace(/\//g, '\\')] : [verb, path]
+  return (await $.process.run(argv, { timeoutMs: 10_000 })).exitCode === 0
+}
+
 /**
- * Reads the store, applies `change`, writes it back and redraws whoever reads
- * it. Every open session shares one last-writer-wins store, so the write is
- * optimistic: it starts over when the revision moved between its read and its
- * write, and after a settle it re-reads: the write survived exactly when its
- * writer is in the current value's lineage (a later write built on it keeps
- * it there; another session's overwrite does not), else `change` is redone on
- * top of what is there. `change` may run more than once: no side effects.
+ * Runs `work` while this session alone holds the store. Every open session
+ * shares one last-writer-wins store with get and set only, so a
+ * read-modify-write needs real mutual exclusion: `mkdir` either creates the
+ * lock directory or fails, atomically, for every process. A lock older than
+ * LOCK_STALE_MS belongs to a session that died inside its few milliseconds of
+ * work, and is broken.
  */
-async function mutate($: $, change: (data: DotData) => DotData): Promise<DotData> {
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const base = await load($)
-    const writer = newId()
-    const next: DotData = { ...change(base), rev: base.rev + 1, lineage: [...base.lineage, writer].slice(-LINEAGE) }
-    if ((await load($)).rev !== base.rev) continue
-    await $.store.set(STORE_KEY, next)
-    if (config.settleMs > 0) await $.clock.sleep(config.settleMs)
-    const after = await load($)
-    if (after.lineage.includes(writer)) {
-      await update($, DATA, () => after)
-      return next
+async function withLock<T>($: $, work: () => Promise<T>): Promise<T> {
+  const path = await lockPath($)
+  const startedAt = await $.clock.now()
+  while (!(await directory($, 'mkdir', path))) {
+    const now = await $.clock.now()
+    const held = await $.fs.stat(path).catch(() => null)
+    if (held !== null && now - held.mtimeMs > LOCK_STALE_MS) {
+      await directory($, 'rmdir', path)
+      continue
     }
+    if (now - startedAt > LOCK_WAIT_MS) {
+      throw new Error(`dot: another session held the store lock (${path}) for over ${LOCK_WAIT_MS / 1000}s; the change was not saved`)
+    }
+    await $.clock.sleep(LOCK_POLL_MS)
   }
-  throw new Error('dot: another session kept writing the store at the same moment; the change was not saved')
+  try {
+    return await work()
+  } finally {
+    await directory($, 'rmdir', path)
+  }
+}
+
+/** Reads the store, applies `change` and writes it back, holding the lock; redraws whoever reads it. */
+async function mutate($: $, change: (data: DotData) => DotData): Promise<DotData> {
+  const next = await withLock($, async () => {
+    const changed = change(await load($))
+    await $.store.set(STORE_KEY, changed)
+    return changed
+  })
+  await update($, DATA, () => next)
+  return next
 }
 
 async function refresh($: $): Promise<DotData> {
@@ -183,6 +219,9 @@ async function tick($: $): Promise<void> {
     if (config.proactiveMinutes > 0 && isIdle && isDue) {
       await startJob($, { kind: 'research', responsibilityId: null, label: 'Proactive research', cwd: session.cwd }, researchPrompt(data, session.cwd, false))
     }
+  } catch (error) {
+    // A busy lock or a failed spawn: the next tick tries again.
+    $.ui.log(`dot: scheduler tick: ${messageOf(error)}`, { to: 'debug' })
   } finally {
     session.isTicking = false
   }
@@ -483,7 +522,6 @@ export const register: Register = (on, options) => {
   config.proactiveMinutes = Number(options.proactiveMinutes ?? 120)
   config.idleMinutes = Number(options.idleMinutes ?? 10)
   config.reviewModel = String(options.reviewModel ?? 'haiku')
-  config.settleMs = Number(options.settleMs ?? 300)
 
   on('tool.check', async ($, e, next) => {
     const base = await next(e)
@@ -554,15 +592,23 @@ export const register: Register = (on, options) => {
     const said = typeof args.schedule === 'string' && args.schedule.trim() !== '' ? parseSchedule(args.schedule) : null
     if (said !== null && 'error' in said) return { deny: said.error }
 
-    return { result: await assign($, args.responsibility.trim(), said) }
+    try {
+      return { result: await assign($, args.responsibility.trim(), said) }
+    } catch (error) {
+      return { deny: messageOf(error) }
+    }
   })
 
   on('tool.call', { tool: 'mcp__dot__note' }, async ($, e) => {
     const text = (e as unknown as Record<string, unknown>).text
     if (typeof text !== 'string' || text.trim() === '') return { deny: 'text must be a non-empty string' }
     const now = await $.clock.now()
-    const data = await mutate($, d => addNotes(d, [text], 'you', { now, newId }))
-    return { result: `${nameOf(data)} noted it.` }
+    try {
+      const data = await mutate($, d => addNotes(d, [text], 'you', { now, newId }))
+      return { result: `${nameOf(data)} noted it.` }
+    } catch (error) {
+      return { deny: messageOf(error) }
+    }
   })
 
   on('tool.call', { tool: 'mcp__dot__status' }, async $ => {
@@ -570,7 +616,14 @@ export const register: Register = (on, options) => {
     return { result: statusText(await refresh($), now, offsetAt(now)) }
   })
 
-  on('command.run', { command: 'dot' }, async ($, e) => ({ text: await runCommand($, parseCommand(e.args)) }))
+  on('command.run', { command: 'dot' }, async ($, e) => {
+    try {
+      return { text: await runCommand($, parseCommand(e.args)) }
+    } catch (error) {
+      // Said as the command's output, not swallowed: nothing was saved.
+      return { text: messageOf(error) }
+    }
+  })
 
   // A drawing never writes: it reads the session's copy, or the store directly.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {

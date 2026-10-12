@@ -68,13 +68,6 @@ export type DotSettings = { isAsleep: boolean; isAutoReview: boolean; isBandShow
 
 export type DotData = {
   version: 1
-  /** Bumped by every write; a write that finds it moved since its read starts over. */
-  rev: number
-  /**
-   * The writers this value descends from, newest last (bounded). A session's
-   * write survived exactly when its writer is in the current lineage.
-   */
-  lineage: string[]
   dot: DotIdentity | null
   responsibilities: DotResponsibility[]
   rules: DotRule[]

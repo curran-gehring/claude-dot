@@ -7,8 +7,6 @@ import type { CommandRunInput, On } from 'claude-code'
 import type { DotData, DotRule } from '../types'
 
 const NOW = Date.UTC(2026, 9, 12, 8)
-/** No settle wait: the mocked clock would hold a sleep until the test advanced it. */
-const FAST = { options: { settleMs: 0 } }
 
 function stored(change: Partial<DotData> = {}): DotData {
   return { ...emptyData(), dot: { name: 'Alfred', look: DEFAULT_LOOK, createdAt: NOW }, ...change }
@@ -19,6 +17,9 @@ function given(on: On, data: DotData | undefined) {
   mock.clock(on, { now: NOW })
   mock.store(on, data === undefined ? {} : { data })
   on('session.cwd', () => ({ value: 'C:/Dev/app' }))
+  on('env.get', (_$, e) => ({ value: ({ HOME: '/home/me', USERNAME: 'Curran' } as Record<string, string>)[e.name] }))
+  // The store lock is always free here; the sharing tests below hold it.
+  on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
 }
 
 /** `/dot <args>` as the person would type it. */
@@ -31,7 +32,7 @@ function rule(level: DotRule['level'], action: string): DotRule {
 }
 
 describe('the guard', () => {
-  test('a handoff rule refuses the call and says who does it', FAST, async ($, on) => {
+  test('a handoff rule refuses the call and says who does it', async ($, on) => {
     given(on, stored({ rules: [rule('handoff', 'Bash(git push --force*)')] }))
     on('tool.check', () => ({ decision: 'allow' }))
 
@@ -41,7 +42,7 @@ describe('the guard', () => {
     expect(verdict.reason).toContain('Hand off')
   })
 
-  test('an ask rule asks', FAST, async ($, on) => {
+  test('an ask rule asks', async ($, on) => {
     given(on, stored({ rules: [rule('ask', 'mcp__*__send*')] }))
     on('tool.check', () => ({ decision: 'allow' }))
 
@@ -50,21 +51,21 @@ describe('the guard', () => {
     expect(verdict.decision).toBe('ask')
   })
 
-  test('an allow rule lets a plain call through without review', FAST, async ($, on) => {
+  test('an allow rule lets a plain call through without review', async ($, on) => {
     given(on, stored({ rules: [rule('allow', 'Bash(pnpm test*)')] }))
     on('tool.check', () => ({ decision: 'ask' }))
 
     expect((await $.tool.check({ tool: 'Bash', input: { command: 'pnpm test' } })).decision).toBe('allow')
   })
 
-  test('the person’s own settings deny is never loosened', FAST, async ($, on) => {
+  test('the person’s own settings deny is never loosened', async ($, on) => {
     given(on, stored({ rules: [rule('allow', 'Bash(*)')] }))
     on('tool.check', () => ({ decision: 'deny', reason: 'settings' }))
 
     expect((await $.tool.check({ tool: 'Bash', input: { command: 'ls' } })).decision).toBe('deny')
   })
 
-  test('the dot’s own tools need no permission', FAST, async ($, on) => {
+  test('the dot’s own tools need no permission', async ($, on) => {
     given(on, stored())
     on('tool.check', () => ({ decision: 'ask' }))
 
@@ -73,7 +74,7 @@ describe('the guard', () => {
 })
 
 describe('/dot', () => {
-  test('assign, list, pause and drop a responsibility', FAST, async ($, on) => {
+  test('assign, list, pause and drop a responsibility', async ($, on) => {
     given(on, stored())
 
     const assigned = await $.command.run(dot('assign weekdays 9:00 | Check CI on main'))
@@ -87,7 +88,7 @@ describe('/dot', () => {
     expect((await $.command.run(dot('list'))).text).toContain('no responsibilities')
   })
 
-  test('notes are readable and forgettable', FAST, async ($, on) => {
+  test('notes are readable and forgettable', async ($, on) => {
     given(on, stored())
 
     await $.command.run(dot('note Prefers pnpm over npm'))
@@ -96,7 +97,7 @@ describe('/dot', () => {
     expect((await $.command.run(dot('notes'))).text).not.toContain('pnpm')
   })
 
-  test('a mistyped command says what exists', FAST, async ($, on) => {
+  test('a mistyped command says what exists', async ($, on) => {
     given(on, stored())
 
     expect((await $.command.run(dot('dance'))).text).toContain('/dot assign')
@@ -109,7 +110,7 @@ describe('the band', () => {
     props: { hasSurvey: false, isWorking: false, maxRows: 3, bodyColumns: 100, scroll: { offset: 0, bodyRows: 3 }, view: {} },
   } as const
 
-  test('shows the dot, what it watches and what needs you', FAST, async ($, on) => {
+  test('shows the dot, what it watches and what needs you', async ($, on) => {
     const inbox = [{ id: 'i1', at: NOW, kind: 'question', title: 'Revert #41?', body: 'b', isDone: false }] as const
     given(on, stored({ inbox: [...inbox] }))
 
@@ -122,7 +123,7 @@ describe('the band', () => {
     }
   })
 
-  test('before setup it invites you to meet your dot', FAST, async ($, on) => {
+  test('before setup it invites you to meet your dot', async ($, on) => {
     given(on, undefined)
 
     const ui = await $.ui.mount({ plugin: 'dot', surface: 'terminal', ...BAND })
@@ -143,9 +144,8 @@ describe('the panes', () => {
     inbox: [{ id: 'i1', at: NOW, kind: 'question', title: 'Revert #41?', body: 'It broke login.', isDone: false }],
   })
 
-  test('the dot pane draws every section on every surface', FAST, async ($, on) => {
+  test('the dot pane draws every section on every surface', async ($, on) => {
     given(on, full)
-    on('env.get', () => ({ value: 'Curran' }))
 
     for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
       const ui = await $.ui.mount({ plugin: 'dot', surface, component: 'Pane', requestId: 'dot', props: PANE_PROPS })
@@ -158,9 +158,8 @@ describe('the panes', () => {
     }
   })
 
-  test('Done on an inbox item clears it', FAST, async ($, on) => {
+  test('Done on an inbox item clears it', async ($, on) => {
     given(on, full)
-    on('env.get', () => ({ value: 'Curran' }))
 
     const ui = await $.ui.mount({ plugin: 'dot', surface: 'terminal', component: 'Pane', requestId: 'dot', props: PANE_PROPS })
     await ui.press({ key: 'done-i1' })
@@ -168,7 +167,7 @@ describe('the panes', () => {
     await ui.unmount()
   })
 
-  test('the setup pane previews the look as you pick it', FAST, async ($, on) => {
+  test('the setup pane previews the look as you pick it', async ($, on) => {
     given(on, undefined)
 
     // The draft is shared state, so each surface picks a new shape from where the last left it.
@@ -186,56 +185,88 @@ describe('the panes', () => {
 })
 
 describe('sharing the store with other sessions', () => {
-  /** An in-memory store under the plugin, with a hook to play another session's write. */
-  function sharedStore(on: On, initial: DotData, afterSet?: (written: DotData, store: Map<string, unknown>) => void) {
+  /**
+   * The host beneath the plugin: an in-memory store and the lock directory
+   * `mkdir` claims atomically, so a test can hold or orphan the lock.
+   */
+  function host(on: On, initial: DotData) {
     const store = new Map<string, unknown>([['data', initial]])
+    const lock = { isHeld: false, mtimeMs: 0, makes: 0 }
     on('store.get', (_$, e) => ({ value: structuredClone(store.get(e.key)) }))
     on('store.set', (_$, e) => {
+      if (!lock.isHeld) throw new Error('a write outside the lock')
       store.set(e.key, structuredClone(e.value))
-      afterSet?.(e.value as DotData, store)
       return { value: undefined }
     })
-    on('store.keys', () => ({ value: [...store.keys()] }))
+    on('env.get', (_$, e) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
+    on('process.run', (_$, e) => {
+      const verb = e.argv[0]
+      const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
+      if (verb === 'mkdir') {
+        if (lock.isHeld) return { value: { ...ok, exitCode: 1, stderr: 'File exists' } }
+        lock.isHeld = true
+        lock.makes += 1
+        lock.mtimeMs = NOW
+        return { value: ok }
+      }
+      if (verb === 'rmdir') {
+        lock.isHeld = false
+        return { value: ok }
+      }
+      throw new Error(`unexpected command ${e.argv.join(' ')}`)
+    })
+    on('fs.stat', (_$, e) => {
+      if (!lock.isHeld) throw new Error(`no such file: ${e.path}`)
+      return { value: { kind: 'dir', size: 0, mtimeMs: lock.mtimeMs, isLink: false } }
+    })
     on('session.cwd', () => ({ value: 'C:/Dev/app' }))
-    mock.clock(on, { now: NOW })
-    return store
+    return { store, lock, clock: mock.clock(on, { now: NOW }) }
   }
 
-  test('a write another session overwrote is redone on top of theirs', FAST, async ($, on) => {
-    let isClobbered = false
-    const store = sharedStore(on, stored(), (written, s) => {
-      if (isClobbered) return
-      isClobbered = true
-      // Another session read the same revision and wrote right after us, dropping our note.
-      s.set('data', { ...written, notes: [], rules: [rule('ask', 'Bash(npm publish*)')], lineage: ['other-session'] })
-    })
+  test('a write waits while another session holds the lock, then lands', async ($, on) => {
+    const { store, lock, clock } = host(on, stored())
+    lock.isHeld = true
+    lock.mtimeMs = NOW
+
+    const writing = $.command.run(dot('note Prefers pnpm'))
+    await clock.advance(200)
+    expect((store.get('data') as DotData).notes).toEqual([])
+    lock.isHeld = false
+    await clock.advance(200)
+    await writing
+
+    expect((store.get('data') as DotData).notes.map(n => n.text)).toEqual(['Prefers pnpm'])
+    expect(lock.isHeld).toBe(false)
+  })
+
+  test('a lock left by a session that died is broken', async ($, on) => {
+    const { store, lock } = host(on, stored())
+    lock.isHeld = true
+    lock.mtimeMs = NOW - 60_000
 
     await $.command.run(dot('note Prefers pnpm'))
 
-    const data = store.get('data') as DotData
-    expect(data.notes.map(n => n.text)).toEqual(['Prefers pnpm'])
-    expect(data.rules.map(r => r.action)).toEqual(['Bash(npm publish*)'])
+    expect((store.get('data') as DotData).notes.map(n => n.text)).toEqual(['Prefers pnpm'])
   })
 
-  test('a clobber followed by a newer write is still caught and redone', FAST, async ($, on) => {
-    let writes = 0
-    const store = sharedStore(on, stored(), (written, s) => {
-      writes += 1
-      if (writes !== 1) return
-      // B overwrote our revision without our note; C then wrote on top of B.
-      const clobber = { ...written, notes: [], lineage: ['b'] }
-      s.set('data', { ...clobber, rev: written.rev + 1, lineage: ['b', 'c'], rules: [rule('ask', 'Bash(npm publish*)')] })
-    })
+  test('a lock that never frees fails loudly instead of writing', async ($, on) => {
+    const { store, lock, clock } = host(on, stored())
+    lock.isHeld = true
+    lock.mtimeMs = NOW
 
-    await $.command.run(dot('note Prefers pnpm'))
+    const writing = $.command.run(dot('note Prefers pnpm'))
+    await clock.advance(1_000)
+    lock.mtimeMs = NOW + 1_000
+    await clock.advance(1_000)
+    lock.mtimeMs = NOW + 2_000
+    await clock.advance(4_000)
 
-    const data = store.get('data') as DotData
-    expect(data.notes.map(n => n.text)).toEqual(['Prefers pnpm'])
-    expect(data.rules.map(r => r.action)).toEqual(['Bash(npm publish*)'])
+    expect((await writing).text).toContain('store lock')
+    expect((store.get('data') as DotData).notes).toEqual([])
   })
 
-  test('the guard reads rules another session just added', FAST, async ($, on) => {
-    const store = sharedStore(on, stored())
+  test('the guard reads rules another session just added', async ($, on) => {
+    const { store } = host(on, stored())
     on('tool.check', () => ({ decision: 'allow' }))
     expect((await $.tool.check({ tool: 'Bash', input: { command: 'gh pr merge 3' } })).decision).toBe('allow')
 

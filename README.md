@@ -82,12 +82,13 @@ Code resolves under your permission mode, the same as without the mod.
 - All state is one JSON value in the plugin's store, under your Claude Code config directory.
   Every open session on the machine shares it. A value that fails to parse is kept under a
   `corrupt-<time>` key and reported loudly; it is never dropped.
-- That store is last-writer-wins, so writes are optimistic. Each value carries a revision and
-  the lineage of writes it descends from. A write starts over if the revision moved since it
-  read. After a short settle (`settleMs`), it re-reads: the write survived exactly when it is
-  in the current lineage. If not, it redoes the change on top of what is there. That redo is also what keeps two sessions from starting the same
-  job. The guard reads the store fresh on every call, so a rule added in one session applies in
-  every other one immediately.
+- That store is last-writer-wins with no compare-and-set, so every write holds a lock while it
+  reads, changes and writes. The lock is a `plugins/dot.lock` directory that `mkdir` creates
+  atomically. A lock older than 30 seconds belongs to a session that died while holding it, and
+  is broken. A write that can't get the lock within 5 seconds fails and says so; nothing is
+  half-saved. The lock is also what keeps two sessions from starting the same job. The guard
+  reads the store fresh on every call, so a rule added in one session applies in every other one
+  immediately.
 - Each session writes a heartbeat. Work started by a session that closed is marked
   *interrupted*, so it can't block the next run.
 - The model in your main conversation gets a short section about your dot: its
@@ -103,7 +104,6 @@ Under `pluginConfigs.dot` in your settings, or in the config menu:
 | `proactiveMinutes` | `120` | Minutes between research passes per project. `0` turns research off |
 | `idleMinutes` | `10` | How long you must be away before research starts |
 | `reviewModel` | `haiku` | The model Auto-review uses |
-| `settleMs` | `300` | How long a write waits before checking that no other session overwrote it |
 
 ## Limits
 
