@@ -59,6 +59,8 @@ const session = {
   ticker: null as { cancel: () => void } | null,
   /** Answers of agents that finished before the dot saved their id, by agent id. */
   unclaimed: new Map<string, { answer: string; isAborted: boolean }>(),
+  /** Agent ids not yet saved on their activity (the save failed), by activity id. */
+  unattached: new Map<string, string>(),
 }
 const MAX_UNCLAIMED = 50
 
@@ -265,16 +267,32 @@ async function startJob($: $, job: Job, prompt: string): Promise<string> {
     return `${job.label} ${reason}`
   }
 
-  const agentId = spawned.agentId
-  await mutate($, d => ({ ...d, activity: d.activity.map(one => (one.id === id ? { ...one, agentId } : one)) }))
-  const finished = session.unclaimed.get(agentId)
-  if (finished !== undefined) {
-    session.unclaimed.delete(agentId)
-    await collect($, agentId, finished.answer, finished.isAborted)
-    return `${nameOf(data)} finished: ${job.label}`
-  }
+  session.unattached.set(id, spawned.agentId)
+  const isFinished = await attach($, id, spawned.agentId)
+  if (isFinished) return `${nameOf(data)} finished: ${job.label}`
   $.ui.toast(`${nameOf(data)} is on it: ${job.label}`)
   return `${nameOf(data)} started: ${job.label}`
+}
+
+/**
+ * Saves which agent runs an activity, then collects its answer if it already
+ * finished. A save that fails (the lock was busy) stays in `unattached` and is
+ * retried each tick, so no result is lost while this session lives. True when
+ * the answer was collected here.
+ */
+async function attach($: $, activityId: string, agentId: string): Promise<boolean> {
+  try {
+    await mutate($, d => ({ ...d, activity: d.activity.map(one => (one.id === activityId ? { ...one, agentId } : one)) }))
+  } catch (error) {
+    $.ui.log(`dot: could not save agent ${agentId} yet, will retry: ${messageOf(error)}`, { to: 'debug' })
+    return false
+  }
+  session.unattached.delete(activityId)
+  const finished = session.unclaimed.get(agentId)
+  if (finished === undefined) return false
+  session.unclaimed.delete(agentId)
+  await collect($, agentId, finished.answer, finished.isAborted)
+  return true
 }
 
 async function collect($: $, agentId: string, answer: string, isAborted: boolean): Promise<void> {
@@ -309,6 +327,7 @@ async function tick($: $): Promise<void> {
   session.isTicking = true
   try {
     const now = await $.clock.now()
+    for (const [activityId, agentId] of [...session.unattached]) await attach($, activityId, agentId)
     const data = await mutate($, d => reapStale({ ...d, heartbeats: { ...d.heartbeats, [session.id]: now } }, now))
     if (data.dot === null || data.settings.isAsleep || !session.isInteractive) return
 
