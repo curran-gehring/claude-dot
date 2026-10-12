@@ -41,17 +41,17 @@ function matches(pattern: ActionPattern, tool: string, input: unknown): boolean 
 }
 
 const SENDS = /^mcp__.*(send|reply|forward)/i
-const DETAIL_MAX = 4_000
 const ARG_MAX = 160
 
 /**
  * What a person needs to see to approve a call: for a send, reply or forward,
- * the whole draft (recipients, subject, body, attachments); for anything
- * else, the tool and its argument, kept short.
+ * the whole draft (recipients, subject, body, attachments), never clipped,
+ * since an approval covers only what they saw; for anything else, the tool
+ * and its argument, kept short.
  */
 export function callDetail(tool: string, input: unknown): string {
   if (!SENDS.test(tool)) return `${tool}: ${clipped(argOf(tool, input), ARG_MAX)}`
-  return clipped(`${tool}\n${JSON.stringify(input, null, 2)}`, DETAIL_MAX)
+  return `${tool}\n${JSON.stringify(input, null, 2)}`
 }
 
 function clipped(text: string, max: number): string {

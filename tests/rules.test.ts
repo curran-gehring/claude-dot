@@ -14,10 +14,9 @@ describe('callDetail', () => {
     expect(callDetail('mcp__claude_ai_ms365__outlook_forward_mail', { to: ['a@example.com'] })).toContain('a@example.com')
   })
 
-  test('a draft past the limit is clipped and says so', async () => {
-    const detail = callDetail('mcp__claude_ai_Gmail__reply', { body: 'y'.repeat(10_000) })
-    expect(detail.length).toBeLessThanOrEqual(4_000)
-    expect(detail.endsWith('…')).toBe(true)
+  test('a long draft is shown whole: an approval covers only what the person saw', async () => {
+    const body = `${'y'.repeat(10_000)}END`
+    expect(callDetail('mcp__claude_ai_Gmail__reply', { body })).toContain(body)
   })
 
   test('anything else shows its argument, clipped short', async () => {

@@ -116,7 +116,7 @@ export function pane(ui: Ui, data: DotData, now: number, offset: Offset, user: s
             <Button key={`done-${item.id}`} label="Done" onPress={() => act.markDone(item.id)} />
             <Button key={`ask-${item.id}`} label="Ask Claude" onPress={() => act.askClaude(item)} />
           </Box>
-          <Text color={INACTIVE}>   {clip(item.body, 600)}</Text>
+          <Text color={INACTIVE}>   {clip(item.body, 600)}{item.body.length > 600 ? '  (all of it: /dot inbox)' : ''}</Text>
         </Box>
       )), 'Nothing for you right now.')}
       {section('Working on', running.map(one => (
