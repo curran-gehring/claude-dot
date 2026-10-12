@@ -84,17 +84,18 @@ async function load($: $): Promise<DotData> {
     return decodeData(await $.store.get(STORE_KEY))
   } catch (error) {
     if (!(error instanceof DotDataError)) throw error
-    return withLock($, () => readHeld($))
+    return withLock($, isHeld => readHeld($, isHeld))
   }
 }
 
-/** Reads the store while holding the lock, setting aside a value that does not decode. */
-async function readHeld($: $): Promise<DotData> {
+/** Reads the store while holding the lock, setting aside a value that does not decode (fenced, like every write). */
+async function readHeld($: $, isHeld: () => Promise<boolean>): Promise<DotData> {
   const raw = await $.store.get(STORE_KEY)
   try {
     return decodeData(raw)
   } catch (error) {
     if (!(error instanceof DotDataError)) throw error
+    if (!(await isHeld())) throw new Error('dot: this session lost the store lock before setting aside unreadable data; nothing was changed')
     const backup = `corrupt-${await $.clock.now()}`
     await $.store.set(backup, raw)
     await $.store.set(STORE_KEY, emptyData())
@@ -215,7 +216,7 @@ async function release($: $, lock: string, token: string | null): Promise<void> 
 /** Reads the store, applies `change` and writes it back, holding the lock; redraws whoever reads it. */
 async function mutate($: $, change: (data: DotData) => DotData): Promise<DotData> {
   const next = await withLock($, async isHeld => {
-    const changed = change(await readHeld($))
+    const changed = change(await readHeld($, isHeld))
     if (!(await isHeld())) throw new Error('dot: this session lost the store lock to another before writing; the change was not saved')
     await $.store.set(STORE_KEY, changed)
     return changed

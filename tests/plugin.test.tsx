@@ -403,6 +403,24 @@ describe('sharing the store with other sessions', () => {
     expect([...store.keys()].some(key => key.startsWith('corrupt-'))).toBe(true)
   })
 
+  test('setting aside a corrupt store is fenced like any write', async ($, on) => {
+    const { store, dirs } = host(on, stored(), {
+      onGet: d => {
+        // Another session takes the lock from under us while we look at the unreadable value.
+        const lock = d.get(LOCK)
+        if (lock !== undefined) lock.owner = 'thief'
+      },
+    })
+    store.set('data', { version: 9 })
+
+    const said = await $.command.run(dot('note x'))
+
+    expect(said.text).toContain('lost the store lock')
+    expect(store.get('data')).toEqual({ version: 9 })
+    expect([...store.keys()].some(key => key.startsWith('corrupt-'))).toBe(false)
+    expect(dirs.get(LOCK)?.owner).toBe('thief')
+  })
+
   test('the guard reads rules another session just added', async ($, on) => {
     const { store } = host(on, stored())
     on('tool.check', () => ({ decision: 'allow' }))
