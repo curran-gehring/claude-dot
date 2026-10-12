@@ -43,7 +43,18 @@ type $ = EngineInterface
 // The module's own memory: lost on a reload, so everything that matters is
 // also in the store (each activity carries its agent and its session).
 const config = { proactiveMinutes: 120, idleMinutes: 10, reviewModel: 'haiku' }
-const session = { id: 'unknown', cwd: '', isInteractive: false, lastPersonAt: 0, isMainTurnRunning: false, isTicking: false, ticker: null as { cancel: () => void } | null }
+const session = {
+  id: 'unknown',
+  cwd: '',
+  isInteractive: false,
+  lastPersonAt: 0,
+  isMainTurnRunning: false,
+  isTicking: false,
+  ticker: null as { cancel: () => void } | null,
+  /** Answers of agents that finished before the dot saved their id, by agent id. */
+  unclaimed: new Map<string, { answer: string; isAborted: boolean }>(),
+}
+const MAX_UNCLAIMED = 50
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -147,7 +158,8 @@ async function withLock<T>($: $, work: (isHeld: () => Promise<boolean>) => Promi
       try {
         await $.fs.write(`${lock}/owner`, token)
       } catch (error) {
-        await directory($, 'remove', lock)
+        // Ours has no owner file yet; release puts back a lock that is someone else's by now.
+        await release($, lock, null)
         throw new Error(`dot: could not write the store lock's owner file (${messageOf(error)}); the change was not saved`)
       }
       break
@@ -175,7 +187,7 @@ async function withLock<T>($: $, work: (isHeld: () => Promise<boolean>) => Promi
  * (atomic), then its token read, so a lock another session took after this
  * one went stale is put back for it rather than deleted.
  */
-async function release($: $, lock: string, token: string): Promise<void> {
+async function release($: $, lock: string, token: string | null): Promise<void> {
   const aside = `${lock}.released-${newId()}`
   if (!(await directory($, 'move', lock, aside))) return
   if ((await ownerOf($, aside)) === token) {
@@ -242,13 +254,24 @@ async function startJob($: $, job: Job, prompt: string): Promise<string> {
 
   const agentId = spawned.agentId
   await mutate($, d => ({ ...d, activity: d.activity.map(one => (one.id === id ? { ...one, agentId } : one)) }))
+  const finished = session.unclaimed.get(agentId)
+  if (finished !== undefined) {
+    session.unclaimed.delete(agentId)
+    await collect($, agentId, finished.answer, finished.isAborted)
+    return `${nameOf(data)} finished: ${job.label}`
+  }
   $.ui.toast(`${nameOf(data)} is on it: ${job.label}`)
   return `${nameOf(data)} started: ${job.label}`
 }
 
 async function collect($: $, agentId: string, answer: string, isAborted: boolean): Promise<void> {
   const known = await load($)
-  if (!known.activity.some(one => one.status === 'running' && one.agentId === agentId)) return
+  if (!known.activity.some(one => one.status === 'running' && one.agentId === agentId)) {
+    // Possibly a dot agent that finished before its id was saved: kept for startJob to collect.
+    session.unclaimed.set(agentId, { answer, isAborted })
+    if (session.unclaimed.size > MAX_UNCLAIMED) session.unclaimed.delete(session.unclaimed.keys().next().value ?? '')
+    return
+  }
 
   const now = await $.clock.now()
   const outcome = isAborted ? { error: 'it was stopped before it finished' } : parseReport(answer)

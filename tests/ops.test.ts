@@ -90,6 +90,15 @@ test('reapStale fails work whose session stopped checking in', async () => {
   expect(reapStale(alive, NOW + 2 * 24 * 60 * MIN).heartbeats).toEqual({})
 })
 
+test('reapStale fails work that has run too long, even in a live session', async () => {
+  const claimed = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, { now: NOW, offsetOf: UTC, id: 'a1', sessionId: 's1' })
+  if (claimed === null) throw new Error('not claimed')
+  const later = NOW + 4 * 60 * MIN
+  const reaped = reapStale({ ...claimed.data, heartbeats: { s1: later } }, later)
+  expect(reaped.activity[0]).toEqual(expect.objectContaining({ status: 'failed', summary: expect.stringContaining('3h') }))
+  expect(dueResponsibilities(reaped, later).map(r => r.id)).toEqual(['r1'])
+})
+
 test('addNotes skips what it already knows', async () => {
   const once = addNotes(emptyData(), ['Prefers pnpm'], 'you', { now: NOW, newId: ids })
   expect(addNotes(once, ['prefers pnpm ', 'Deploys on Render'], 'work', { now: NOW, newId: ids }).notes.map(n => n.text)).toEqual(['Prefers pnpm', 'Deploys on Render'])

@@ -7,6 +7,8 @@ const MIN = 60_000
 const DAY = 24 * 60 * MIN
 /** A session that has not checked in for this long is gone, and so is the work it was running. */
 const HEARTBEAT_STALE = 5 * MIN
+/** No background run takes this long; one that has is failed so its job can run again. */
+const MAX_RUN = 3 * 60 * MIN
 const MAX_NOTES = 200
 const MAX_DONE_INBOX = 50
 const MAX_FINISHED_ACTIVITY = 50
@@ -132,10 +134,12 @@ export function reapStale(data: DotData, now: number): DotData {
   return {
     ...data,
     heartbeats,
-    activity: data.activity.map(one =>
-      one.status === 'running' && !isAlive(one.sessionId)
-        ? { ...one, status: 'failed', endedAt: now, summary: 'interrupted: its session closed before it finished' }
-        : one),
+    activity: data.activity.map(one => {
+      if (one.status !== 'running') return one
+      if (!isAlive(one.sessionId)) return { ...one, status: 'failed', endedAt: now, summary: 'interrupted: its session closed before it finished' }
+      if (now - one.startedAt > MAX_RUN) return { ...one, status: 'failed', endedAt: now, summary: 'gave up: no report after 3h' }
+      return one
+    }),
   }
 }
 
