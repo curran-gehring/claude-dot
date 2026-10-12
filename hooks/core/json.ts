@@ -1,6 +1,10 @@
+/** How much of an answer's end is searched: the report is written last. */
+const TAIL = 20_000
+
 /**
- * The last JSON object in a model's text: a fenced ```json block if there is
- * one, else the last `{...}` that parses. `undefined` when there is none.
+ * The last JSON object in a model's text: a fenced ```json block if one
+ * parses, else the last complete object written in the text, the enclosing one
+ * rather than one nested in it. `undefined` when there is none.
  */
 export function lastJsonObject(text: string): unknown {
   const fenced = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)].map(found => found[1] ?? '')
@@ -9,16 +13,44 @@ export function lastJsonObject(text: string): unknown {
     if (isObject(value)) return value
   }
 
-  // The report sits at the end; scanning only the tail keeps this bounded.
-  const tail = text.slice(-20_000)
-  for (let end = tail.lastIndexOf('}'); end >= 0; end = tail.lastIndexOf('}', end - 1)) {
-    for (let start = tail.lastIndexOf('{', end); start >= 0; start = tail.lastIndexOf('{', start - 1)) {
-      const value = tryParse(tail.slice(start, end + 1))
-      if (isObject(value)) return value
+  const tail = text.slice(-TAIL)
+  let last: unknown
+  for (let start = tail.indexOf('{'); start >= 0; ) {
+    const end = matchingBrace(tail, start)
+    const value = end < 0 ? undefined : tryParse(tail.slice(start, end + 1))
+    if (isObject(value)) {
+      last = value
+      start = tail.indexOf('{', end + 1)
+    } else {
+      start = tail.indexOf('{', start + 1)
     }
   }
 
-  return undefined
+  return last
+}
+
+/** The index of the `}` closing the `{` at `start`, skipping braces inside strings; -1 when it never closes. */
+function matchingBrace(text: string, start: number): number {
+  let depth = 0
+  let isInString = false
+  let isEscaped = false
+  for (let at = start; at < text.length; at += 1) {
+    const char = text[at]
+    if (isInString) {
+      if (isEscaped) isEscaped = false
+      else if (char === '\\') isEscaped = true
+      else if (char === '"') isInString = false
+      continue
+    }
+    if (char === '"') isInString = true
+    else if (char === '{') depth += 1
+    else if (char === '}') {
+      depth -= 1
+      if (depth === 0) return at
+    }
+  }
+
+  return -1
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {
