@@ -6,8 +6,8 @@ import { DEFAULT_LOOK, face } from './core/avatar'
 import { HELP, parseCommand } from './core/command'
 import type { DotCommand } from './core/command'
 import { DotDataError, decodeData, emptyData } from './core/data'
-import { addInbox, addNotes, addResponsibility, claimWork, dueResponsibilities, failWork, finishWork, reapStale, selfPacedDue } from './core/ops'
-import type { Job } from './core/ops'
+import { abandonClaim, addInbox, addNotes, addResponsibility, claimWork, dueResponsibilities, finishWork, reapStale, selfPacedDue } from './core/ops'
+import type { Job, Previous } from './core/ops'
 import { parseReport } from './core/report'
 import { REVIEW_SYSTEM, buildReviewPrompt, parseVerdict } from './core/review'
 import type { Review } from './core/review'
@@ -61,8 +61,14 @@ const session = {
   unclaimed: new Map<string, { answer: string; isAborted: boolean }>(),
   /** Agent ids not yet saved on their activity (the save failed), by activity id. */
   unattached: new Map<string, string>(),
+  /** When a job whose start failed may be tried again, by jobKey. */
+  backoff: new Map<string, number>(),
+  /** Set at session.end: a tick already running starts nothing after it. */
+  isEnded: false,
 }
 const MAX_UNCLAIMED = 50
+/** How long a job whose start failed waits before the scheduler tries it again. */
+const RETRY_MS = 5 * MIN
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -243,16 +249,33 @@ async function cwdOf($: $): Promise<string> {
 
 // ── Background work ────────────────────────────────────────────────────
 
-async function startJob($: $, job: Job, prompt: string): Promise<string> {
+/** What a job is, for backing off a failed start: its responsibility, or the kind of work in a project. */
+function jobKey(job: Job): string {
+  return job.responsibilityId ?? `${job.kind}:${job.cwd}`
+}
+
+/**
+ * Claims and spawns one job. A job the scheduler starts (`isScheduled`) is
+ * skipped while its last failed start backs off; nothing starts once the
+ * session has ended; a claim whose agent never started is rolled back.
+ */
+async function startJob($: $, job: Job, prompt: string, isScheduled = false): Promise<string> {
   const now = await $.clock.now()
+  if (session.isEnded) return `${job.label} was not started: the session has ended.`
+  if (isScheduled && (session.backoff.get(jobKey(job)) ?? 0) > now) return `${job.label} is waiting to retry.`
   const id = newId()
-  const held = { isStarted: false }
+  const held: { previous: Previous | null } = { previous: null }
   const data = await mutate($, d => {
     const claimed = claimWork(d, job, { now, offsetOf: offsetAt, id, sessionId: session.id })
-    held.isStarted = claimed !== null
+    held.previous = claimed?.previous ?? null
     return claimed?.data ?? d
   })
-  if (!held.isStarted) return `${job.label} is already running.`
+  const previous = held.previous
+  if (previous === null) return `${job.label} is already running.`
+  if (session.isEnded) {
+    await mutate($, d => abandonClaim(d, id, previous, 'not started: its session ended', now))
+    return `${job.label} was not started: the session has ended.`
+  }
 
   const spawned = await $.agent
     .spawn({
@@ -264,7 +287,8 @@ async function startJob($: $, job: Job, prompt: string): Promise<string> {
     .catch((error: unknown) => ({ deny: error instanceof Error ? error.message : String(error), agentId: undefined }))
   if (spawned.deny !== undefined || spawned.agentId === undefined) {
     const reason = `could not start: ${spawned.deny ?? 'the engine gave no agent id'}`
-    await mutate($, d => failWork(d, id, reason, now))
+    await mutate($, d => abandonClaim(d, id, previous, reason, now))
+    session.backoff.set(jobKey(job), now + RETRY_MS)
     $.ui.toast(`${nameOf(data)}: ${job.label} ${reason}`)
     return `${job.label} ${reason}`
   }
@@ -351,19 +375,19 @@ async function tick($: $): Promise<void> {
     if (data.dot === null || data.settings.isAsleep || !session.isInteractive) return
 
     for (const due of dueResponsibilities(data, now)) {
-      await startJob($, { kind: 'work', responsibilityId: due.id, label: due.text, cwd: due.cwd }, workPrompt(data, due))
+      await startJob($, { kind: 'work', responsibilityId: due.id, label: due.text, cwd: due.cwd }, workPrompt(data, due), true)
     }
 
     const isIdle = !session.isMainTurnRunning && now - session.lastPersonAt >= config.idleMinutes * MIN
     if (config.proactiveMinutes > 0 && isIdle) {
       // "When the dot decides": an unscheduled responsibility runs while you are away, once per proactive interval.
       for (const own of selfPacedDue(data, now, config.proactiveMinutes * MIN)) {
-        await startJob($, { kind: 'work', responsibilityId: own.id, label: own.text, cwd: own.cwd }, workPrompt(data, own))
+        await startJob($, { kind: 'work', responsibilityId: own.id, label: own.text, cwd: own.cwd }, workPrompt(data, own), true)
       }
     }
     const isDue = now - (data.lastResearchAt[session.cwd] ?? 0) >= config.proactiveMinutes * MIN
     if (config.proactiveMinutes > 0 && isIdle && isDue) {
-      await startJob($, { kind: 'research', responsibilityId: null, label: 'Proactive research', cwd: session.cwd }, researchPrompt(data, session.cwd, false))
+      await startJob($, { kind: 'research', responsibilityId: null, label: 'Proactive research', cwd: session.cwd }, researchPrompt(data, session.cwd, false), true)
     }
   } catch (error) {
     // A busy lock or a failed spawn: the next tick tries again.
@@ -694,6 +718,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
     session.id = await $.session.id()
+    session.isEnded = false
     session.cwd = e.cwd
     session.isInteractive = e.isInteractive
     session.lastPersonAt = await $.clock.now()
@@ -708,6 +733,7 @@ export const register: Register = (on, options) => {
   })
 
   on('session.end', async ($, e, next) => {
+    session.isEnded = true
     session.ticker?.cancel()
     session.ticker = null
     session.isInteractive = false

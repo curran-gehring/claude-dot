@@ -74,7 +74,7 @@ export function claimWork(
   data: DotData,
   job: Job,
   at: Clock & { id: string; sessionId: string },
-): { data: DotData; activity: DotActivity } | null {
+): { data: DotData; activity: DotActivity; previous: Previous } | null {
   const isTaken = job.kind === 'work'
     ? isRunning(data, one => one.responsibilityId === job.responsibilityId)
     : job.kind === 'research' && isRunning(data, one => one.kind === 'research' && one.cwd === job.cwd)
@@ -98,8 +98,40 @@ export function claimWork(
       ? one
       : { ...one, lastRunAt: at.now, nextRunAt: one.schedule === null ? null : nextRunAt(one.schedule, at.now, at.offsetOf) })
   const lastResearchAt = job.kind === 'research' ? { ...data.lastResearchAt, [job.cwd]: at.now } : data.lastResearchAt
+  const before = data.responsibilities.find(one => one.id === job.responsibilityId)
+  const previous: Previous = {
+    run: before === undefined ? null : { lastRunAt: before.lastRunAt, nextRunAt: before.nextRunAt },
+    researchAt: job.kind === 'research' ? data.lastResearchAt[job.cwd] ?? null : null,
+  }
 
-  return { data: trimActivity({ ...data, responsibilities, lastResearchAt, activity: [...data.activity, activity] }), activity }
+  return { data: trimActivity({ ...data, responsibilities, lastResearchAt, activity: [...data.activity, activity] }), activity, previous }
+}
+
+/** What a claim moved forward, so a claim whose agent never started can be undone. */
+export type Previous = {
+  run: { lastRunAt: number | null; nextRunAt: number | null } | null
+  researchAt: number | null
+}
+
+/**
+ * Undoes a claim whose agent never started: the activity fails with
+ * `reason`, and its responsibility's run times and the project's research
+ * time go back to what they were, so the job is due again.
+ */
+export function abandonClaim(data: DotData, activityId: string, previous: Previous, reason: string, now: number): DotData {
+  const activity = data.activity.find(one => one.id === activityId)
+  const failed = failWork(data, activityId, reason, now)
+  if (activity === undefined) return failed
+  const responsibilities = previous.run === null
+    ? failed.responsibilities
+    : failed.responsibilities.map(one => (one.id === activity.responsibilityId ? { ...one, ...previous.run } : one))
+  const lastResearchAt = { ...failed.lastResearchAt }
+  if (activity.kind === 'research') {
+    if (previous.researchAt === null) delete lastResearchAt[activity.cwd]
+    else lastResearchAt[activity.cwd] = previous.researchAt
+  }
+
+  return { ...failed, responsibilities, lastResearchAt }
 }
 
 /**

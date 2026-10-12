@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { emptyData } from '../hooks/core/data'
 import { moodOf } from '../hooks/core/avatar'
-import { addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, selfPacedDue, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
+import { abandonClaim, addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, selfPacedDue, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
 
 const MIN = 60_000
 const UTC = () => 0
@@ -144,4 +144,17 @@ test('an unscheduled responsibility runs on the dot’s own pace', async () => {
   expect(selfPacedDue(done, NOW + 121 * MIN, every).map(r => r.id)).toEqual(['r1'])
   expect(selfPacedDue({ ...done, responsibilities: done.responsibilities.map(r => ({ ...r, isPaused: true })) }, NOW + 121 * MIN, every)).toEqual([])
   expect(selfPacedDue(withJob(), NOW, every)).toEqual([])
+})
+
+test('a claim whose agent never started is rolled back', async () => {
+  const at = { now: NOW + 60 * MIN, offsetOf: UTC, id: 'a1', sessionId: 's1' }
+  const work = claimWork(withJob(), { kind: 'work', responsibilityId: 'r1', label: 'Check CI', cwd: 'C:/Dev/app' }, at)
+  if (work === null) throw new Error('not claimed')
+  const rolled = abandonClaim(work.data, work.activity.id, work.previous, 'could not start', at.now)
+  expect(rolled.responsibilities[0]).toEqual(expect.objectContaining({ nextRunAt: NOW + 60 * MIN, lastRunAt: null }))
+  expect(rolled.activity[0]).toEqual(expect.objectContaining({ status: 'failed', summary: 'could not start' }))
+
+  const research = claimWork(emptyData(), { kind: 'research', responsibilityId: null, label: 'r', cwd: 'C:/Dev/app' }, at)
+  if (research === null) throw new Error('not claimed')
+  expect(abandonClaim(research.data, research.activity.id, research.previous, 'x', at.now).lastResearchAt).toEqual({})
 })
