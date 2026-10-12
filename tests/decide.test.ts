@@ -4,17 +4,12 @@ import { DEFAULT_LOOK } from '../hooks/core/avatar'
 import { emptyData } from '../hooks/core/data'
 import { afterReview, decide } from '../hooks/core/decide'
 import type { Call } from '../hooks/core/decide'
-import type { DotActivity, DotData, DotRule } from '../types'
+import type { DotData, DotRule } from '../types'
 
 const dot = (change: Partial<DotData> = {}): DotData => ({ ...emptyData(), dot: { name: 'Alfred', look: DEFAULT_LOOK, createdAt: 0 }, ...change })
 const rule = (level: DotRule['level'], action: string): DotRule => ({ id: action, level, action })
-const call = (change: Partial<Call>): Call => ({ tool: 'Bash', input: { command: 'ls' }, job: undefined, isCall: true, cwd: 'C:/Dev/app', base: { decision: 'allow' }, ...change })
+const call = (change: Partial<Call>): Call => ({ tool: 'Bash', input: { command: 'ls' }, isResearch: false, isCall: true, cwd: 'C:/Dev/app', base: { decision: 'allow' }, ...change })
 const push = { tool: 'Bash', input: { command: 'git push origin main' } }
-const research: DotActivity = {
-  id: 'a', kind: 'research', label: 'research', cwd: 'C:/Dev/app', responsibilityId: null, agentId: 'ag',
-  sessionId: 's', status: 'running', startedAt: 0, endedAt: null, summary: null,
-}
-
 describe('decide', () => {
   test('a consequential real call goes to Auto-review', async () => {
     expect(decide(dot(), call(push))).toEqual({ kind: 'review', rule: undefined })
@@ -46,8 +41,8 @@ describe('decide', () => {
   })
 
   test('research may only read', async () => {
-    expect(decide(dot(), call({ tool: 'Edit', input: { file_path: 'C:/Dev/app/a.ts' }, job: research }))).toEqual({ kind: 'answer', check: expect.objectContaining({ decision: 'deny' }) })
-    expect(decide(dot(), call({ tool: 'Read', input: { file_path: 'C:/Dev/app/a.ts' }, job: research }))).toEqual({ kind: 'answer', check: { decision: 'allow' } })
+    expect(decide(dot(), call({ tool: 'Edit', input: { file_path: 'C:/Dev/app/a.ts' }, isResearch: true }))).toEqual({ kind: 'answer', check: expect.objectContaining({ decision: 'deny' }) })
+    expect(decide(dot(), call({ tool: 'Read', input: { file_path: 'C:/Dev/app/a.ts' }, isResearch: true }))).toEqual({ kind: 'answer', check: { decision: 'allow' } })
   })
 })
 

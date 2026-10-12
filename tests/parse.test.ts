@@ -88,6 +88,22 @@ describe('decodeData', () => {
     expect(decodeData(JSON.parse(JSON.stringify(data)))).toEqual(data)
   })
 
+  test('a schedule out of range is malformed', async () => {
+    const withSchedule = (schedule: unknown) => ({
+      ...emptyData(),
+      responsibilities: [{
+        id: 'r', text: 't', schedule, cwd: '/', createdAt: 0, nextRunAt: null, lastRunAt: null, lastSummary: null, isPaused: false,
+      }],
+    })
+    expect(() => decodeData(withSchedule({ kind: 'interval', minutes: 0 }))).toThrow('minutes')
+    expect(() => decodeData(withSchedule({ kind: 'interval', minutes: 1.5 }))).toThrow('minutes')
+    expect(() => decodeData(withSchedule({ kind: 'weekly', days: [1], minute: 1440 }))).toThrow('minute')
+    expect(() => decodeData(withSchedule({ kind: 'weekly', days: [7], minute: 540 }))).toThrow('days')
+    expect(() => decodeData(withSchedule({ kind: 'weekly', days: [], minute: 540 }))).toThrow('days')
+    expect(() => decodeData(withSchedule({ kind: 'weekly', days: [1, 1], minute: 540 }))).toThrow('days')
+    expect(decodeData(withSchedule({ kind: 'weekly', days: [1, 5], minute: 0 })).responsibilities[0]?.schedule).toEqual({ kind: 'weekly', days: [1, 5], minute: 0 })
+  })
+
   test('a malformed value throws instead of resetting quietly', async () => {
     expect(() => decodeData({ version: 9 })).toThrow('version')
     expect(() => decodeData({ ...emptyData(), notes: [{ id: 'n1' }] })).toThrow('notes[0]')

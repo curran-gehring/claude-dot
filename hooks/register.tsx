@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DotData, DotIdentity, DotInboxItem, DotRule, DotSchedule } from '../types'
+import type { DotActivity, DotData, DotIdentity, DotInboxItem, DotRule, DotSchedule } from '../types'
 import { DEFAULT_LOOK, face } from './core/avatar'
 import { HELP, parseCommand } from './core/command'
 import type { DotCommand } from './core/command'
@@ -43,7 +43,7 @@ type $ = EngineInterface
 // The module's own memory: lost on a reload, so everything that matters is
 // also in the store (each activity carries its agent and its session).
 const config = { proactiveMinutes: 120, idleMinutes: 10, reviewModel: 'haiku' }
-const session = { id: 'unknown', cwd: '', isInteractive: false, lastPersonAt: 0, isMainTurnRunning: false, isTicking: false }
+const session = { id: 'unknown', cwd: '', isInteractive: false, lastPersonAt: 0, isMainTurnRunning: false, isTicking: false, ticker: null as { cancel: () => void } | null }
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -321,12 +321,24 @@ async function report($: $, kind: DotInboxItem['kind'], tool: string, input: unk
   await mutate($, d => addInbox(d, [{ kind, title, body }], { now, newId }))
 }
 
+/**
+ * Whether a call comes from the dot's research agent. The engine's own record
+ * of the agent's type decides, so a call made before the dot recorded the
+ * agent's id (it is spawned first) is still held to read-only.
+ */
+async function isResearchAgent($: $, agentId: string | undefined, job: DotActivity | undefined): Promise<boolean> {
+  if (agentId === undefined) return false
+  if (job !== undefined) return job.kind === 'research'
+  const agents = await $.agent.list()
+  return agents.find(one => one.id === agentId)?.type === RESEARCHER
+}
+
 async function guard($: $, tool: string, input: unknown, agentId: string | undefined, isCall: boolean, base: Check): Promise<Check> {
   // Always the store, never the session's copy: a rule added in another session applies at once.
   const data = await load($)
   const job = agentId === undefined ? undefined : data.activity.find(one => one.agentId === agentId)
   const cwd = job?.cwd ?? (await cwdOf($))
-  let step = decide(data, { tool, input, job, isCall, cwd, base })
+  let step = decide(data, { tool, input, isResearch: await isResearchAgent($, agentId, job), isCall, cwd, base })
   if (step.kind === 'review') {
     const request = job ? [job.label] : await recentAsks($)
     step = afterReview(await autoReview($, tool, input, request, data.rules, step.rule), step.rule, base)
@@ -590,12 +602,16 @@ export const register: Register = (on, options) => {
 
     const now = await $.clock.now()
     await mutate($, d => reapStale({ ...d, heartbeats: { ...d.heartbeats, [session.id]: now } }, now))
-    if (session.isInteractive) $.clock.every(MIN, () => void tick($))
+    session.ticker?.cancel()
+    session.ticker = session.isInteractive ? $.clock.every(MIN, () => void tick($)) : null
 
     return started
   })
 
   on('session.end', async ($, e, next) => {
+    session.ticker?.cancel()
+    session.ticker = null
+    session.isInteractive = false
     // Let other sessions see at once that work started here will not finish.
     await mutate($, d => {
       const { [session.id]: _gone, ...heartbeats } = d.heartbeats

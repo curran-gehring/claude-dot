@@ -1,4 +1,4 @@
-import type { DotActivity, DotData, DotRule } from '../../types'
+import type { DotData, DotRule } from '../../types'
 import type { Review } from './review'
 import { isConsequential, matchingRule } from './rules'
 
@@ -20,8 +20,8 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(['Read', 'Glob', 'Gr
 export type Call = {
   tool: string
   input: unknown
-  /** The dot's own job the call runs in, when a dot worker or researcher makes it. */
-  job: DotActivity | undefined
+  /** The call comes from the dot's research agent, which may only read. */
+  isResearch: boolean
   /** A real call (not a `$.tool.check` query): only real calls are reviewed, asked or reported. */
   isCall: boolean
   cwd: string
@@ -38,7 +38,7 @@ export function decide(data: DotData, call: Call): Step {
   const name = data.dot?.name ?? 'Your dot'
   const answer = (check: Check): Step => ({ kind: 'answer', check })
   if (call.base.decision === 'deny') return answer(call.base)
-  if (call.job?.kind === 'research' && !READ_ONLY_TOOLS.has(call.tool)) {
+  if (call.isResearch && !READ_ONLY_TOOLS.has(call.tool)) {
     return answer({ decision: 'deny', reason: `${name}'s proactive research can only read; ${call.tool} is refused there.` })
   }
 

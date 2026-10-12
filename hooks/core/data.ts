@@ -81,13 +81,18 @@ function identity(raw: unknown, at: string): DotIdentity {
 function schedule(raw: unknown, at: string): DotSchedule | null {
   if (raw === null) return null
   const value = obj(raw, at)
-  if (value.kind === 'interval') return { kind: 'interval', minutes: num(value.minutes, `${at}.minutes`) }
+  if (value.kind === 'interval') {
+    const minutes = num(value.minutes, `${at}.minutes`)
+    if (!Number.isInteger(minutes) || minutes < 1) throw new DotDataError(`${at}.minutes is ${minutes}, not a whole number of minutes from 1`)
+    return { kind: 'interval', minutes }
+  }
   if (value.kind === 'weekly') {
-    return {
-      kind: 'weekly',
-      days: list(value.days, `${at}.days`, num),
-      minute: num(value.minute, `${at}.minute`),
-    }
+    const days = list(value.days, `${at}.days`, num)
+    const minute = num(value.minute, `${at}.minute`)
+    const isDays = days.length > 0 && new Set(days).size === days.length && days.every(day => Number.isInteger(day) && day >= 0 && day <= 6)
+    if (!isDays) throw new DotDataError(`${at}.days is ${JSON.stringify(days)}, not distinct days 0 to 6`)
+    if (!Number.isInteger(minute) || minute < 0 || minute > 24 * 60 - 1) throw new DotDataError(`${at}.minute is ${minute}, not a minute of the day 0 to 1439`)
+    return { kind: 'weekly', days, minute }
   }
   throw new DotDataError(`${at}.kind is ${JSON.stringify(value.kind)}`)
 }
