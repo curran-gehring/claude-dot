@@ -1,8 +1,40 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { isConsequential, matchingRule, parseAction } from '../hooks/core/rules'
+import { callDetail, isConsequential, matchingRule, parseAction } from '../hooks/core/rules'
+import { emptyData } from '../hooks/core/data'
+import { rulesText } from '../hooks/text'
 
 const CWD = 'C:/Dev/oregano'
+
+describe('callDetail', () => {
+  test('a send, reply or forward shows the whole draft', async () => {
+    const draft = { to: ['buyer@example.com'], cc: ['ops@example.com'], subject: 'Pallet count', body: 'x'.repeat(500), attachments: ['count.pdf'] }
+    const detail = callDetail('mcp__claude_ai_Gmail__send_message', draft)
+    for (const part of ['buyer@example.com', 'ops@example.com', 'Pallet count', 'x'.repeat(500), 'count.pdf']) expect(detail).toContain(part)
+    expect(callDetail('mcp__claude_ai_ms365__outlook_forward_mail', { to: ['a@example.com'] })).toContain('a@example.com')
+  })
+
+  test('a draft past the limit is clipped and says so', async () => {
+    const detail = callDetail('mcp__claude_ai_Gmail__reply', { body: 'y'.repeat(10_000) })
+    expect(detail.length).toBeLessThanOrEqual(4_000)
+    expect(detail.endsWith('…')).toBe(true)
+  })
+
+  test('anything else shows its argument, clipped short', async () => {
+    expect(callDetail('Bash', { command: 'git push origin main' })).toBe('Bash: git push origin main')
+    expect(callDetail('Bash', { command: 'z'.repeat(1_000) }).length).toBeLessThanOrEqual(170)
+  })
+})
+
+describe('rulesText', () => {
+  test('patterns read as code, so Markdown keeps their stars', async () => {
+    const data = { ...emptyData(), rules: [
+      { id: '1', level: 'when-asked' as const, action: 'mcp__*__*send*' },
+      { id: '2', level: 'handoff' as const, action: 'any Amazon account change' },
+    ] }
+    expect(rulesText(data)).toBe('1. [when-asked] `mcp__*__*send*`\n2. [handoff] any Amazon account change')
+  })
+})
 
 describe('parseAction', () => {
   test('a tool pattern', async () => {

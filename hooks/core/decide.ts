@@ -63,6 +63,20 @@ export function decide(data: DotData, call: Call): Step {
   return { kind: 'review', rule }
 }
 
+/**
+ * A background job's version of a step: nobody is at its terminal, so what
+ * would wait on the person is handed off to the inbox instead.
+ */
+export function unattended(step: Step): Step {
+  if (step.kind !== 'ask') return step
+  return {
+    kind: 'report',
+    inbox: 'handoff',
+    body: step.why,
+    check: { decision: 'deny', reason: `Nobody is watching this run, so this was handed to the person instead (${step.why}). Leave it to them, say so in your report, and carry on without it.` },
+  }
+}
+
 /** What Auto-review's verdict means for the call. */
 export function afterReview(review: Review, rule: DotRule | undefined, base: Check): Step {
   switch (review.verdict) {

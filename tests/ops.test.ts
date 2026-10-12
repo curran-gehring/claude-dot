@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { emptyData } from '../hooks/core/data'
 import { moodOf } from '../hooks/core/avatar'
-import { abandonClaim, addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, selfPacedDue, finishWork, formatWhen, reapStale } from '../hooks/core/ops'
+import { abandonClaim, addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, selfPacedDue, finishWork, formatWhen, reapStale, skipRun } from '../hooks/core/ops'
 
 const MIN = 60_000
 const UTC = () => 0
@@ -29,6 +29,18 @@ describe('responsibilities', () => {
     const claimed = claimWork(data, { kind: 'work', responsibilityId: 'r1', label: 'Check CI on main', cwd: 'C:/Dev/app' }, { now: NOW + 60 * MIN, offsetOf: UTC, id: 'a1', sessionId: 's1' })
     expect(claimed && dueResponsibilities(claimed.data, NOW + 61 * MIN)).toEqual([])
   })
+})
+
+test('a run its pre-check turned down moves on without running', async () => {
+  const at = NOW + 60 * MIN
+  const scheduled = skipRun(withJob(), 'r1', at, UTC)
+  expect(scheduled.responsibilities[0]).toEqual(expect.objectContaining({ nextRunAt: at + 60 * MIN, lastSummary: null }))
+  expect(scheduled.activity).toEqual([])
+  expect(dueResponsibilities(scheduled, at + MIN)).toEqual([])
+
+  const ownPace = skipRun(withJob(null), 'r1', at, UTC)
+  expect(ownPace.responsibilities[0]?.lastRunAt).toBe(at)
+  expect(selfPacedDue(ownPace, at + MIN, 120 * MIN)).toEqual([])
 })
 
 describe('claimWork', () => {

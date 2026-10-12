@@ -105,6 +105,16 @@ describe('parseCommand', () => {
   })
 })
 
+describe('parseCommand: check', () => {
+  test('sets or clears a responsibility’s pre-check', async () => {
+    expect(parseCommand('check 1 ~/.claude/dot/agent-mail-check.sh')).toEqual({ kind: 'check', index: 1, command: '~/.claude/dot/agent-mail-check.sh' })
+    expect(parseCommand('check 2 test -s inbox.json && echo yes')).toEqual({ kind: 'check', index: 2, command: 'test -s inbox.json && echo yes' })
+    expect(parseCommand('check 1 off')).toEqual({ kind: 'check', index: 1, command: null })
+    expect(parseCommand('check 1')).toEqual(expect.objectContaining({ kind: 'error' }))
+    expect(parseCommand('check one sh x.sh')).toEqual(expect.objectContaining({ kind: 'error' }))
+  })
+})
+
 describe('decodeData', () => {
   test('nothing stored is a fresh dot', async () => {
     expect(decodeData(undefined)).toEqual(emptyData())
@@ -130,6 +140,18 @@ describe('decodeData', () => {
     expect(() => decodeData(withSchedule({ kind: 'weekly', days: [], minute: 540 }))).toThrow('days')
     expect(() => decodeData(withSchedule({ kind: 'weekly', days: [1, 1], minute: 540 }))).toThrow('days')
     expect(decodeData(withSchedule({ kind: 'weekly', days: [1, 5], minute: 0 })).responsibilities[0]?.schedule).toEqual({ kind: 'weekly', days: [1, 5], minute: 0 })
+  })
+
+  test('a responsibility saved before pre-checks existed has none; a malformed one throws', async () => {
+    const withCheck = (extra: Record<string, unknown>) => ({
+      ...emptyData(),
+      responsibilities: [{
+        id: 'r', text: 't', schedule: null, cwd: '/', createdAt: 0, nextRunAt: null, lastRunAt: null, lastSummary: null, isPaused: false, ...extra,
+      }],
+    })
+    expect(decodeData(withCheck({})).responsibilities[0]?.check).toBeNull()
+    expect(decodeData(withCheck({ check: 'sh x.sh' })).responsibilities[0]?.check).toBe('sh x.sh')
+    expect(() => decodeData(withCheck({ check: 5 }))).toThrow('check')
   })
 
   test('a malformed value throws instead of resetting quietly', async () => {

@@ -1,19 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { DotActivity, DotData, DotIdentity, DotInboxItem, DotRule, DotSchedule } from '../types'
+import type { DotActivity, DotData, DotIdentity, DotInboxItem, DotResponsibility, DotRule, DotSchedule } from '../types'
 import { DEFAULT_LOOK, face } from './core/avatar'
 import { HELP, parseCommand } from './core/command'
 import type { DotCommand } from './core/command'
 import { DotDataError, decodeData, emptyData } from './core/data'
-import { abandonClaim, addInbox, addNotes, addResponsibility, claimWork, dueResponsibilities, finishWork, reapStale, selfPacedDue } from './core/ops'
+import { abandonClaim, addInbox, addNotes, addResponsibility, claimWork, dueResponsibilities, finishWork, reapStale, selfPacedDue, skipRun } from './core/ops'
 import type { Job, Previous } from './core/ops'
 import { parseReport } from './core/report'
 import { REVIEW_SYSTEM, buildReviewPrompt, parseVerdict } from './core/review'
 import type { Review } from './core/review'
-import { READ_ONLY_TOOLS, afterReview, decide } from './core/decide'
+import { READ_ONLY_TOOLS, afterReview, decide, unattended } from './core/decide'
 import type { Check } from './core/decide'
-import { argOf } from './core/rules'
+import { argOf, callDetail } from './core/rules'
 import { describeSchedule, nextRunAt, parseSchedule } from './core/schedule'
 import { RESEARCHER_SYSTEM, WORKER_SYSTEM, contextSection, delegatePrompt, researchPrompt, workPrompt } from './prompts'
 import { STORE_KEY, newId, offsetAt } from './state'
@@ -72,6 +72,8 @@ const session = {
 const MAX_UNCLAIMED = 50
 /** How long a job whose start failed waits before the scheduler tries it again. */
 const RETRY_MS = 5 * MIN
+/** How long a responsibility's pre-check may take before it counts as failed to run. */
+const CHECK_MS = 60_000
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -380,6 +382,22 @@ async function collect($: $, agentId: string, answer: string, isAborted: boolean
   return true
 }
 
+/**
+ * Whether a responsibility's pre-check finds work: its command exits 0. With no
+ * check, or one that can't run at all, it runs as it would without one.
+ */
+async function isWanted($: $, one: DotResponsibility): Promise<boolean> {
+  if (one.check === null) return true
+  const isWindows = (await $.env.get('ComSpec')) !== undefined
+  const argv = isWindows ? ['cmd', '/d', '/s', '/c', one.check] : ['sh', '-c', one.check]
+  try {
+    return (await $.process.run(argv, { cwd: one.cwd, timeoutMs: CHECK_MS })).exitCode === 0
+  } catch (error) {
+    $.ui.log(`dot: the pre-check for "${one.text.slice(0, 40)}" could not run, so the job runs: ${messageOf(error)}`, { to: 'debug' })
+    return true
+  }
+}
+
 async function tick($: $): Promise<void> {
   if (session.isTicking) return
   session.isTicking = true
@@ -394,6 +412,10 @@ async function tick($: $): Promise<void> {
     if (data.dot === null || data.settings.isAsleep || !session.isInteractive) return
 
     for (const due of dueResponsibilities(data, now)) {
+      if (!(await isWanted($, due))) {
+        await mutate($, d => skipRun(d, due.id, now, offsetAt))
+        continue
+      }
       await startJob($, { kind: 'work', responsibilityId: due.id, label: due.text, cwd: due.cwd }, workPrompt(data, due), true)
     }
 
@@ -401,6 +423,10 @@ async function tick($: $): Promise<void> {
     if (config.proactiveMinutes > 0 && isIdle) {
       // "When the dot decides": an unscheduled responsibility runs while you are away, once per proactive interval.
       for (const own of selfPacedDue(data, now, config.proactiveMinutes * MIN)) {
+        if (!(await isWanted($, own))) {
+          await mutate($, d => skipRun(d, own.id, now, offsetAt))
+          continue
+        }
         await startJob($, { kind: 'work', responsibilityId: own.id, label: own.text, cwd: own.cwd }, workPrompt(data, own), true)
       }
     }
@@ -443,9 +469,8 @@ async function autoReview($: $, tool: string, input: unknown, request: readonly 
 /** Puts the call to the person in the engine's own question dialog; headless, the mode decides. */
 async function askPerson($: $, data: DotData, tool: string, input: unknown, why: string): Promise<Check> {
   if ((await $.session.surface()) === null) return { decision: 'ask', reason: why }
-  const what = `${tool}: ${argOf(tool, input).slice(0, 160)}`
   try {
-    const answer = await $.ui.ask(`${what}. ${why}. Let it run?`, {
+    const answer = await $.ui.ask(`${callDetail(tool, input)}\n\n${why}. Let it run?`, {
       header: nameOf(data).slice(0, 12),
       options: ['Approve', 'Deny', 'Hand off to me'],
     })
@@ -460,19 +485,20 @@ async function askPerson($: $, data: DotData, tool: string, input: unknown, why:
 async function report($: $, kind: DotInboxItem['kind'], tool: string, input: unknown, body: string): Promise<void> {
   const now = await $.clock.now()
   const title = `${kind === 'blocked' ? 'Blocked' : 'Handed to you'}: ${tool} ${argOf(tool, input).slice(0, 80)}`
-  await mutate($, d => addInbox(d, [{ kind, title, body }], { now, newId }))
+  await mutate($, d => addInbox(d, [{ kind, title, body: `${body}\n\n${callDetail(tool, input)}` }], { now, newId }))
 }
 
 /**
- * Whether a call comes from the dot's research agent. The engine's own record
- * of the agent's type decides, so a call made before the dot recorded the
- * agent's id (it is spawned first) is still held to read-only.
+ * Which of the dot's agents makes a call: its research, its other background
+ * work, or neither (the person's session and their own agents). The engine's
+ * record of the agent's type decides when the dot hasn't recorded the agent's
+ * id yet (it is spawned first), so such a call is still held to its limits.
  */
-async function isResearchAgent($: $, agentId: string | undefined, job: DotActivity | undefined): Promise<boolean> {
-  if (agentId === undefined) return false
-  if (job !== undefined) return job.kind === 'research'
-  const agents = await $.agent.list()
-  return agents.find(one => one.id === agentId)?.type === RESEARCHER
+async function dotAgentOf($: $, agentId: string | undefined, job: DotActivity | undefined): Promise<'research' | 'work' | null> {
+  if (agentId === undefined) return null
+  if (job !== undefined) return job.kind === 'research' ? 'research' : 'work'
+  const type = (await $.agent.list()).find(one => one.id === agentId)?.type
+  return type === RESEARCHER ? 'research' : type === WORKER ? 'work' : null
 }
 
 async function guard($: $, tool: string, input: unknown, agentId: string | undefined, isCall: boolean, base: Check): Promise<Check> {
@@ -480,11 +506,14 @@ async function guard($: $, tool: string, input: unknown, agentId: string | undef
   const data = await load($)
   const job = agentId === undefined ? undefined : data.activity.find(one => one.agentId === agentId)
   const cwd = job?.cwd ?? (await cwdOf($))
-  let step = decide(data, { tool, input, isResearch: await isResearchAgent($, agentId, job), isCall, cwd, base })
+  const agent = await dotAgentOf($, agentId, job)
+  let step = decide(data, { tool, input, isResearch: agent === 'research', isCall, cwd, base })
   if (step.kind === 'review') {
     const request = job ? [job.label] : await recentAsks($)
     step = afterReview(await autoReview($, tool, input, request, data.rules, step.rule), step.rule, base)
   }
+  // Nobody is at a background job's terminal: what would wait on the person goes to the inbox.
+  if (agent !== null) step = unattended(step)
   if (step.kind === 'ask') return askPerson($, data, tool, input, step.why)
   if (step.kind === 'report') await report($, step.inbox, tool, input, step.body)
   return step.kind === 'review' ? base : step.check
@@ -602,6 +631,14 @@ async function runCommand($: $, command: DotCommand): Promise<string> {
       if (typeof one === 'string') return one
       await mutate($, d => ({ ...d, responsibilities: d.responsibilities.filter(r => r.id !== one.id) }))
       return `Dropped: ${one.text}`
+    }
+    case 'check': {
+      const one = at(data.responsibilities, command.index, 'responsibility')
+      if (typeof one === 'string') return one
+      await mutate($, d => ({ ...d, responsibilities: d.responsibilities.map(r => (r.id === one.id ? { ...r, check: command.command } : r)) }))
+      return command.command === null
+        ? `${name} no longer checks first: ${one.text}`
+        : `${name} checks first, and runs only when it exits 0: ${command.command}`
     }
     case 'rule': {
       const rule: DotRule = { id: newId(), level: command.level, action: command.action }

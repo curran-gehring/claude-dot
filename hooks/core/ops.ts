@@ -34,6 +34,7 @@ export function addResponsibility(
     lastRunAt: null,
     lastSummary: null,
     isPaused: false,
+    check: null,
   }
 
   return { ...data, responsibilities: [...data.responsibilities, responsibility] }
@@ -61,6 +62,18 @@ export function selfPacedDue(data: DotData, now: number, everyMs: number): DotRe
     && !one.isPaused
     && (one.lastRunAt === null || now - one.lastRunAt >= everyMs)
     && !isRunning(data, run => run.responsibilityId === one.id))
+}
+
+/**
+ * A run its pre-check turned down: nothing starts, and the responsibility moves
+ * on as if it had run, so the check isn't repeated every tick.
+ */
+export function skipRun(data: DotData, id: string, now: number, offsetOf: Offset): DotData {
+  return {
+    ...data,
+    responsibilities: data.responsibilities.map(one =>
+      one.id !== id ? one : one.schedule === null ? { ...one, lastRunAt: now } : { ...one, nextRunAt: nextRunAt(one.schedule, now, offsetOf) }),
+  }
 }
 
 export type Job = { kind: DotActivityKind; responsibilityId: string | null; label: string; cwd: string }

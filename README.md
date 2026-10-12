@@ -49,6 +49,7 @@ project and suggests two or three responsibilities it could take on.
 /dot assign [<when> |] <job>  give it a standing responsibility
 /dot list                     responsibilities, numbered
 /dot run|pause|resume|drop N  act on responsibility N
+/dot check N <command>|off    a cheap pre-check before each automatic run of N
 /dot inbox · /dot done N      what it has for you; mark item N handled
 /dot rule <level> <action>    add a rule; /dot rules lists them, /dot unrule N removes one
 /dot note <text> · /dot notes · /dot forget N|all
@@ -59,6 +60,16 @@ project and suggests two or three responsibilities it could take on.
 /dot sleep|wake               pause all scheduled work and research
 /dot reset                    start over (asks first)
 ```
+
+### Pre-checks
+
+A scheduled job starts a full agent each time it's due, even when there's nothing to do. Give it
+a shell command that checks first: `/dot check 1 ~/bin/has-new-mail.sh`. Before each automatic run,
+the dot runs the command in the job's directory (`sh -c` on macOS and Linux, `cmd /c` on Windows,
+with a one-minute limit). The agent starts only when the command exits 0. Any other exit skips that
+run and moves the schedule on. A check that can't run at all doesn't block the job: it runs as if
+there were no check. `/dot run N` always runs, without the check. Only you can set a check, with
+the command; the dot's tools can't.
 
 ## How the guard decides
 
@@ -72,6 +83,11 @@ For every tool call, through the `tool.check` hook:
 4. A consequential call, or one under a `when-asked` rule, goes to Auto-review, then to its
    verdict.
 5. Everything else is left to Claude Code exactly as before.
+
+A call from one of the dot's own background jobs never waits on a dialog, because nobody is
+watching that run. What would ask you is handed off instead: the call is refused and lands in the
+inbox for you to do or approve. For an email send, reply or forward, both the approval dialog
+and that inbox item show the whole draft: recipients, subject, body and attachments.
 
 When no one is at the terminal (`claude -p`, the SDK), an **ask** falls back to Claude Code's own
 permission mode instead of a dialog. If the guard itself fails, it answers `ask`, which Claude

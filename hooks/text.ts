@@ -1,6 +1,7 @@
 import type { DotData, DotInboxItem } from '../types'
 import { face, moodOf, needsYou } from './core/avatar'
 import { ago, formatWhen } from './core/ops'
+import { parseAction } from './core/rules'
 import { describeSchedule } from './core/schedule'
 import type { Offset } from './core/schedule'
 
@@ -20,7 +21,8 @@ export function responsibilitiesText(data: DotData, now: number, offset: Offset)
       ? 'paused'
       : one.nextRunAt === null ? describeSchedule(null) : `${describeSchedule(one.schedule)}, next ${formatWhen(one.nextRunAt, now, offset)}`
     const last = one.lastSummary ? `\n   last: ${one.lastSummary}` : ''
-    return `${at + 1}. ${one.text}  (${when})${last}`
+    const check = one.check ? `\n   checks first: \`${one.check}\`` : ''
+    return `${at + 1}. ${one.text}  (${when})${check}${last}`
   }).join('\n')
 }
 
@@ -33,7 +35,8 @@ export function inboxText(data: DotData, now: number): string {
 
 export function rulesText(data: DotData): string {
   if (data.rules.length === 0) return 'No rules yet. /dot rule <allow|when-asked|ask|handoff> <action> adds one.'
-  return data.rules.map((rule, at) => `${at + 1}. [${rule.level}] ${rule.action}`).join('\n')
+  // A pattern as code: Markdown would eat its stars.
+  return data.rules.map((rule, at) => `${at + 1}. [${rule.level}] ${parseAction(rule.action) ? `\`${rule.action}\`` : rule.action}`).join('\n')
 }
 
 export function notesText(data: DotData, now: number): string {

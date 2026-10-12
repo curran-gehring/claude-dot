@@ -31,6 +31,8 @@ export type DotResponsibility = {
   lastRunAt: number | null
   lastSummary: string | null
   isPaused: boolean
+  /** A shell command run before each automatic run; the agent starts only when it exits 0. */
+  check: string | null
 }
 
 export type DotRuleLevel = 'allow' | 'when-asked' | 'ask' | 'handoff'

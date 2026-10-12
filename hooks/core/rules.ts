@@ -40,6 +40,24 @@ function matches(pattern: ActionPattern, tool: string, input: unknown): boolean 
   return pattern.arg === null || globOf(pattern.arg).test(argOf(tool, input))
 }
 
+const SENDS = /^mcp__.*(send|reply|forward)/i
+const DETAIL_MAX = 4_000
+const ARG_MAX = 160
+
+/**
+ * What a person needs to see to approve a call: for a send, reply or forward,
+ * the whole draft (recipients, subject, body, attachments); for anything
+ * else, the tool and its argument, kept short.
+ */
+export function callDetail(tool: string, input: unknown): string {
+  if (!SENDS.test(tool)) return `${tool}: ${clipped(argOf(tool, input), ARG_MAX)}`
+  return clipped(`${tool}\n${JSON.stringify(input, null, 2)}`, DETAIL_MAX)
+}
+
+function clipped(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
+}
+
 /** The argument a pattern's parentheses are matched against. */
 export function argOf(tool: string, input: unknown): string {
   const fields = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>

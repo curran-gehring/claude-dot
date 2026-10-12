@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { DEFAULT_LOOK } from '../hooks/core/avatar'
 import { emptyData } from '../hooks/core/data'
-import { afterReview, decide } from '../hooks/core/decide'
+import { afterReview, decide, unattended } from '../hooks/core/decide'
 import type { Call } from '../hooks/core/decide'
 import type { DotData, DotRule } from '../types'
 
@@ -44,6 +44,22 @@ describe('decide', () => {
     expect(decide(dot(), call({ tool: 'Edit', input: { file_path: 'C:/Dev/app/a.ts' }, isResearch: true }))).toEqual({ kind: 'answer', check: expect.objectContaining({ decision: 'deny' }) })
     expect(decide(dot(), call({ tool: 'Read', input: { file_path: 'C:/Dev/app/a.ts' }, isResearch: true }))).toEqual({ kind: 'answer', check: { decision: 'allow' } })
     expect(decide(dot(), call({ tool: 'TodoWrite', input: { todos: [] }, isResearch: true }))).toEqual({ kind: 'answer', check: expect.objectContaining({ decision: 'deny' }) })
+  })
+})
+
+describe('unattended', () => {
+  test('a background job never waits on a person: what would ask is handed off instead', async () => {
+    expect(unattended({ kind: 'ask', why: 'Your rule "Bash(git push*)" says ask first' })).toEqual({
+      kind: 'report', inbox: 'handoff', body: 'Your rule "Bash(git push*)" says ask first',
+      check: { decision: 'deny', reason: expect.stringContaining('Nobody is watching this run') },
+    })
+  })
+
+  test('every other step is left as it is', async () => {
+    const answer = { kind: 'answer' as const, check: { decision: 'allow' as const } }
+    expect(unattended(answer)).toBe(answer)
+    const review = { kind: 'review' as const, rule: undefined }
+    expect(unattended(review)).toBe(review)
   })
 })
 

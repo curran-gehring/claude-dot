@@ -12,6 +12,7 @@ export type DotCommand =
   | { kind: 'run' | 'pause' | 'resume' | 'drop' | 'unrule' | 'done'; index: number }
   | { kind: 'forget'; index: number | 'all' }
   | { kind: 'rule'; level: DotRuleLevel; action: string }
+  | { kind: 'check'; index: number; command: string | null }
   | { kind: 'rules' }
   | { kind: 'note'; text: string }
   | { kind: 'notes' }
@@ -31,6 +32,7 @@ export const HELP = [
   '/dot assign [<when> |] <job> give it a standing responsibility; <when>: every 2h, daily 9:00, weekdays 9:30, mon,thu 17:00',
   '/dot list                    responsibilities, numbered',
   '/dot run|pause|resume|drop N act on responsibility N',
+  '/dot check N <command>|off   run <command> before each automatic run of N; it starts only when the command exits 0',
   '/dot rule <level> <action>   level: allow, when-asked, ask, handoff; action: Bash(git push*), mcp__*__send*, or words',
   '/dot rules · /dot unrule N   list or remove rules',
   '/dot note <text> · /dot notes · /dot forget N|all   its notebook, which you can read',
@@ -59,6 +61,12 @@ export function parseCommand(args: string): DotCommand {
     return index === null ? { kind: 'error', text: '/dot forget takes a note number from /dot notes, or "all"' } : { kind: 'forget', index }
   }
   if (verb === 'name') return rest ? { kind: 'name', name: rest.slice(0, 40) } : { kind: 'error', text: '/dot name <name>' }
+  if (verb === 'check') {
+    const index = numberOf(restWords[0] ?? '')
+    const command = rest.slice((restWords[0] ?? '').length).trim()
+    if (index === null || command === '') return { kind: 'error', text: '/dot check N <command>, or /dot check N off' }
+    return { kind: 'check', index, command: command.toLowerCase() === 'off' ? null : command }
+  }
   if (verb === 'note') return rest ? { kind: 'note', text: rest } : { kind: 'error', text: '/dot note <text>' }
   if (verb === 'delegate') return rest ? { kind: 'delegate', text: rest } : { kind: 'error', text: '/dot delegate <task>' }
   if (verb === 'assign') return assign(rest)

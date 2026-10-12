@@ -111,6 +111,8 @@ function responsibility(raw: unknown, at: string): DotResponsibility {
     lastRunAt: nullable(value.lastRunAt, `${at}.lastRunAt`, num),
     lastSummary: nullable(value.lastSummary, `${at}.lastSummary`, str),
     isPaused: bool(value.isPaused, `${at}.isPaused`),
+    // Stores written before pre-checks existed have no field: no check.
+    check: value.check === undefined ? null : nullable(value.check, `${at}.check`, str),
   }
 }
 

@@ -94,6 +94,17 @@ describe('/dot', () => {
     expect((await $.command.run(dot('list'))).text).toContain('no responsibilities')
   })
 
+  test('a pre-check is set, shown and cleared', async ($, on) => {
+    given(on, stored())
+    await $.command.run(dot('assign every 15m | Read agent mail'))
+
+    expect((await $.command.run(dot('check 1 sh ~/.claude/dot/mail-check.sh'))).text).toContain('checks first')
+    expect((await $.command.run(dot('list'))).text).toContain('checks first: `sh ~/.claude/dot/mail-check.sh`')
+    expect((await $.command.run(dot('check 1 off'))).text).toContain('no longer checks')
+    expect((await $.command.run(dot('list'))).text).not.toContain('checks first')
+    expect((await $.command.run(dot('check 9 sh x.sh'))).text).toContain('There is no responsibility 9')
+  })
+
   test('notes are readable and forgettable', async ($, on) => {
     given(on, stored())
 
@@ -143,7 +154,7 @@ describe('the panes', () => {
   const full = stored({
     responsibilities: [{
       id: 'r1', text: 'Check CI on main', schedule: { kind: 'interval', minutes: 60 }, cwd: 'C:/Dev/app', createdAt: NOW,
-      nextRunAt: NOW + 60_000 * 60, lastRunAt: null, lastSummary: 'all green', isPaused: false,
+      nextRunAt: NOW + 60_000 * 60, lastRunAt: null, lastSummary: 'all green', isPaused: false, check: null,
     }],
     rules: [rule('handoff', 'Bash(gh pr merge*)')],
     notes: [{ id: 'n1', at: NOW, text: 'Prefers pnpm', source: 'you' }],
