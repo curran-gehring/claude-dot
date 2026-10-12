@@ -68,6 +68,10 @@ export type DotSettings = { isAsleep: boolean; isAutoReview: boolean; isBandShow
 
 export type DotData = {
   version: 1
+  /** Bumped by every write; a write that finds it moved since its read starts over. */
+  rev: number
+  /** The write that produced this value, so a session can tell its own write from another's. */
+  writer: string
   dot: DotIdentity | null
   responsibilities: DotResponsibility[]
   rules: DotRule[]

@@ -37,7 +37,7 @@ type $ = EngineInterface
 
 // The module's own memory: lost on a reload, so everything that matters is
 // also in the store (each activity carries its agent and its session).
-const config = { proactiveMinutes: 120, idleMinutes: 10, reviewModel: 'haiku' }
+const config = { proactiveMinutes: 120, idleMinutes: 10, reviewModel: 'haiku', settleMs: 300 }
 const session = { id: 'unknown', cwd: '', isInteractive: false, lastPersonAt: 0, isMainTurnRunning: false, isTicking: false }
 
 function nameOf(data: DotData): string {
@@ -67,12 +67,29 @@ async function load($: $): Promise<DotData> {
   }
 }
 
-/** Reads the store, applies `change`, writes it back and redraws whoever reads it. */
+/**
+ * Reads the store, applies `change`, writes it back and redraws whoever reads
+ * it. Every open session shares one last-writer-wins store, so the write is
+ * optimistic: it starts over when the revision moved between its read and its
+ * write, and after a settle it re-reads to catch another session that wrote
+ * the same revision at the same moment, redoing `change` on top of theirs.
+ * `change` may therefore run more than once and must not have side effects.
+ */
 async function mutate($: $, change: (data: DotData) => DotData): Promise<DotData> {
-  const next = change(await load($))
-  await $.store.set(STORE_KEY, next)
-  await update($, DATA, () => next)
-  return next
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const base = await load($)
+    const next: DotData = { ...change(base), rev: base.rev + 1, writer: newId() }
+    if ((await load($)).rev !== base.rev) continue
+    await $.store.set(STORE_KEY, next)
+    if (config.settleMs > 0) await $.clock.sleep(config.settleMs)
+    const after = await load($)
+    // A later revision was built on ours; the same revision by another writer replaced ours.
+    if (after.writer === next.writer || after.rev > next.rev) {
+      await update($, DATA, () => after)
+      return next
+    }
+  }
+  throw new Error('dot: another session kept writing the store at the same moment; the change was not saved')
 }
 
 async function refresh($: $): Promise<DotData> {
@@ -125,7 +142,7 @@ async function startJob($: $, job: Job, prompt: string): Promise<string> {
 }
 
 async function collect($: $, agentId: string, answer: string, isAborted: boolean): Promise<void> {
-  const known = await current($)
+  const known = await load($)
   if (!known.activity.some(one => one.status === 'running' && one.agentId === agentId)) return
 
   const now = await $.clock.now()
@@ -216,7 +233,8 @@ async function report($: $, kind: DotInboxItem['kind'], tool: string, input: unk
 }
 
 async function guard($: $, tool: string, input: unknown, agentId: string | undefined, isCall: boolean, base: Check): Promise<Check> {
-  const data = await current($)
+  // Always the store, never the session's copy: a rule added in another session applies at once.
+  const data = await load($)
   const job = agentId === undefined ? undefined : data.activity.find(one => one.agentId === agentId)
   const cwd = job?.cwd ?? (await cwdOf($))
   let step = decide(data, { tool, input, job, isCall, cwd, base })
@@ -462,6 +480,7 @@ export const register: Register = (on, options) => {
   config.proactiveMinutes = Number(options.proactiveMinutes ?? 120)
   config.idleMinutes = Number(options.idleMinutes ?? 10)
   config.reviewModel = String(options.reviewModel ?? 'haiku')
+  config.settleMs = Number(options.settleMs ?? 300)
 
   on('tool.check', async ($, e, next) => {
     const base = await next(e)
