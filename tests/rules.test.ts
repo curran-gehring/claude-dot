@@ -89,4 +89,13 @@ describe('isConsequential', () => {
     expect(isConsequential('mcp__claude_ai_Google_Drive__trash_file', {}, CWD)).toBe(true)
     expect(isConsequential('mcp__dot__note', {}, CWD)).toBe(false)
   })
+
+  test('a connector tool counts as reading only when its name says so', async () => {
+    for (const tool of ['mcp__foo__write_file', 'mcp__foo__set_status', 'mcp__foo__move_item', 'mcp__db__run_query', 'mcp__foo__frobnicate', 'mcp__foo__read_and_update']) {
+      expect({ tool, is: isConsequential(tool, {}, CWD) }).toEqual({ tool, is: true })
+    }
+    for (const tool of ['mcp__claude_ai_Gmail__get_thread', 'mcp__claude_ai_Google_Calendar__list_events', 'mcp__claude_ai_Hugging_Face__hub_repo_search', 'mcp__pdfcraft__page_render']) {
+      expect({ tool, is: isConsequential(tool, {}, CWD) }).toEqual({ tool, is: false })
+    }
+  })
 })

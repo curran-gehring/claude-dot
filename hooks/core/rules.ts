@@ -80,10 +80,18 @@ const RISKY_SHELL = [
 
 const SECRET_PATH = /(^|\/)\.env(\.|$)|(^|\/)\.ssh\/|id_rsa|id_ed25519|credentials|(^|\/)secrets?\.(json|ya?ml|env|toml)$|\.pem$|\.key$/i
 
-const RISKY_VERBS = new Set([
+/** Words in a connector tool's name that say it only reads. */
+const READ_VERBS = new Set([
+  'get', 'list', 'search', 'read', 'fetch', 'find', 'describe', 'view', 'show', 'inspect', 'lookup',
+  'count', 'preview', 'render', 'screenshot', 'whoami', 'info', 'stat', 'status', 'help', 'details',
+])
+
+/** Words that say it changes something, whatever else the name says. */
+const WRITE_VERBS = new Set([
   'send', 'post', 'publish', 'delete', 'trash', 'remove', 'create', 'update', 'merge', 'transfer', 'pay', 'share',
   'forward', 'reply', 'invite', 'upload', 'archive', 'unarchive', 'spam', 'respond', 'execute', 'drop', 'cancel',
-  'fire', 'grant', 'revoke', 'deploy', 'purchase', 'buy', 'refund', 'charge', 'sign', 'apply',
+  'fire', 'grant', 'revoke', 'deploy', 'purchase', 'buy', 'refund', 'charge', 'sign', 'apply', 'write', 'set',
+  'move', 'edit', 'rename', 'insert', 'put', 'patch', 'add', 'modify', 'save', 'run', 'query',
 ])
 
 /**
@@ -102,8 +110,9 @@ export function isConsequential(tool: string, input: unknown, cwd: string): bool
     return SECRET_PATH.test(path) || !isInside(path, cwd)
   }
   if (tool.startsWith('mcp__')) {
-    const verbs = (tool.split('__').pop() ?? '').toLowerCase().split(/[_-]/)
-    return verbs.some(verb => RISKY_VERBS.has(verb))
+    // Unknown is reviewed: a connector tool passes only when its name reads and never writes.
+    const words = (tool.split('__').pop() ?? '').toLowerCase().split(/[_-]/)
+    return words.some(word => WRITE_VERBS.has(word)) || !words.some(word => READ_VERBS.has(word))
   }
 
   return false
