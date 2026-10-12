@@ -85,9 +85,10 @@ Code resolves under your permission mode, the same as without the mod.
 - That store is last-writer-wins with no compare-and-set, so every write holds a lock while it
   reads, changes and writes. The lock is a `plugins/dot.lock` directory that `mkdir` creates
   atomically; the holder writes its token inside. The holder checks the token again right before
-  it writes and before it releases. A lock older than 30 seconds belongs to a session that died
-  while holding it. It is broken by an atomic rename, and put back if it changed hands in the
-  meantime. A write that can't get the lock within 5 seconds fails and says so; nothing is
+  it writes and before it releases. It writes only within a 60-second lease. A lock older than
+  2 minutes belongs to a session that died while holding it. It is broken by an atomic rename,
+  and put back if it changed hands in the meantime. Without compare-and-set in the store, the one
+  case left is a holder that stalls more than a minute between its last check and its write. A write that can't get the lock within 5 seconds fails and says so; nothing is
   half-saved. The lock is also what keeps two sessions from starting the same job. The guard
   reads the store fresh on every call, so a rule added in one session applies in every other one
   immediately.

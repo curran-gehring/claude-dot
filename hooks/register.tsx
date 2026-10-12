@@ -28,7 +28,13 @@ const DRAFT = atom({ plugin: 'dot', key: 'draft' } as const, null)
 
 const MIN = 60_000
 /** A lock this old was left by a session that died while holding it. */
-const LOCK_STALE_MS = 30_000
+const LOCK_STALE_MS = 120_000
+/**
+ * A holder writes only within this much of taking the lock: half the stale
+ * age, so a breaker cannot judge the lock stale while its holder still writes
+ * unless the holder stalls a minute between its last check and its write.
+ */
+const LOCK_LEASE_MS = LOCK_STALE_MS / 2
 /** How long a write waits for the lock before it fails loudly. */
 const LOCK_WAIT_MS = 5_000
 const LOCK_POLL_MS = 50
@@ -175,8 +181,15 @@ async function withLock<T>($: $, work: (isHeld: () => Promise<boolean>) => Promi
     }
     await $.clock.sleep(LOCK_POLL_MS)
   }
+  const acquiredAt = await $.clock.now()
+  const isHeld = async () => {
+    if ((await $.clock.now()) - acquiredAt > LOCK_LEASE_MS) {
+      throw new Error(`dot: this session held the store lock too long (over ${LOCK_LEASE_MS / 1000}s) to write safely; the change was not saved`)
+    }
+    return (await ownerOf($, lock)) === token
+  }
   try {
-    return await work(async () => (await ownerOf($, lock)) === token)
+    return await work(isHeld)
   } finally {
     await release($, lock, token)
   }

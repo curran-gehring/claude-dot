@@ -202,15 +202,15 @@ describe('sharing the store with other sessions', () => {
   /** The kit hands fs paths over resolved (C:\home\me\...); the host keys them as written. */
   const norm = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
 
-  type Spies = { failOwnerWrite?: boolean; onRun?: (argv: readonly string[], dirs: Map<string, Dir>) => void; onGet?: (dirs: Map<string, Dir>) => void; onSet?: (key: string, dirs: Map<string, Dir>) => void }
+  type Spies = { failOwnerWrite?: boolean; onRun?: (argv: readonly string[], dirs: Map<string, Dir>) => void; onGet?: (dirs: Map<string, Dir>) => void | Promise<void>; onSet?: (key: string, dirs: Map<string, Dir>) => void }
 
   function host(on: On, initial: DotData, spies: Spies = {}) {
     const store = new Map<string, unknown>([['data', initial]])
     const dirs = new Map<string, Dir>()
     const clock = mock.clock(on, { now: NOW })
     const done = (exitCode: number) => ({ value: { exitCode, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-    on('store.get', (_$, e) => {
-      spies.onGet?.(dirs)
+    on('store.get', async (_$, e) => {
+      await spies.onGet?.(dirs)
       return { value: structuredClone(store.get(e.key)) }
     })
     on('store.set', (_$, e) => {
@@ -280,7 +280,7 @@ describe('sharing the store with other sessions', () => {
 
   test('a lock left by a session that died is broken', async ($, on) => {
     const { store, dirs } = host(on, stored())
-    dirs.set(LOCK, { mtimeMs: NOW - 60_000, owner: 'dead' })
+    dirs.set(LOCK, { mtimeMs: NOW - 180_000, owner: 'dead' })
 
     await $.command.run(dot('note Prefers pnpm'))
 
@@ -296,7 +296,7 @@ describe('sharing the store with other sessions', () => {
       // Between our look and our move, the dead lock was cleared and a live session took it.
       d.set(LOCK, { mtimeMs: NOW, owner: 'live' })
     } })
-    dirs.set(LOCK, { mtimeMs: NOW - 60_000, owner: 'dead' })
+    dirs.set(LOCK, { mtimeMs: NOW - 180_000, owner: 'dead' })
 
     const writing = $.command.run(dot('note Prefers pnpm'))
     await clock.advance(200)
@@ -353,6 +353,23 @@ describe('sharing the store with other sessions', () => {
     const said = await $.command.run(dot('note Prefers pnpm'))
 
     expect(said.text).toContain('owner')
+    expect(notes(store)).toEqual([])
+    expect([...dirs.keys()]).toEqual([])
+  })
+
+  test('a holder that stalled past its lease does not write', async ($, on) => {
+    let reads = 0
+    const { store, dirs, clock } = host(on, stored(), {
+      onGet: async () => {
+        reads += 1
+        // The read inside the lock stalls for over a minute: a breaker may judge the lock stale soon.
+        if (reads === 2) await clock.set(NOW + 61_000)
+      },
+    })
+
+    const said = await $.command.run(dot('note Prefers pnpm'))
+
+    expect(said.text).toContain('held the store lock too long')
     expect(notes(store)).toEqual([])
     expect([...dirs.keys()]).toEqual([])
   })
