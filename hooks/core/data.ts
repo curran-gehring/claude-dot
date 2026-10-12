@@ -15,7 +15,7 @@ export function emptyData(): DotData {
   return {
     version: 1,
     rev: 0,
-    writer: '',
+    lineage: [],
     dot: null,
     responsibilities: [],
     rules: [],
@@ -48,7 +48,7 @@ export function decodeData(raw: unknown): DotData {
   return {
     version: 1,
     rev: num(value.rev, `${at}.rev`),
-    writer: str(value.writer, `${at}.writer`),
+    lineage: list(value.lineage, `${at}.lineage`, str),
     dot: value.dot === null ? null : identity(value.dot, `${at}.dot`),
     responsibilities: list(value.responsibilities, `${at}.responsibilities`, responsibility),
     rules: list(value.rules, `${at}.rules`, rule),

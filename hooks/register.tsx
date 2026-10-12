@@ -27,6 +27,8 @@ const DATA = atom({ plugin: 'dot', key: 'data' } as const, null)
 const DRAFT = atom({ plugin: 'dot', key: 'draft' } as const, null)
 
 const MIN = 60_000
+/** Writes remembered in a value's lineage: far more than can land within one settle. */
+const LINEAGE = 64
 const PANE = 'dot'
 const LOOK_PANE = 'dot-look'
 const OWN_TOOL = 'mcp__dot__'
@@ -71,20 +73,21 @@ async function load($: $): Promise<DotData> {
  * Reads the store, applies `change`, writes it back and redraws whoever reads
  * it. Every open session shares one last-writer-wins store, so the write is
  * optimistic: it starts over when the revision moved between its read and its
- * write, and after a settle it re-reads to catch another session that wrote
- * the same revision at the same moment, redoing `change` on top of theirs.
- * `change` may therefore run more than once and must not have side effects.
+ * write, and after a settle it re-reads: the write survived exactly when its
+ * writer is in the current value's lineage (a later write built on it keeps
+ * it there; another session's overwrite does not), else `change` is redone on
+ * top of what is there. `change` may run more than once: no side effects.
  */
 async function mutate($: $, change: (data: DotData) => DotData): Promise<DotData> {
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const base = await load($)
-    const next: DotData = { ...change(base), rev: base.rev + 1, writer: newId() }
+    const writer = newId()
+    const next: DotData = { ...change(base), rev: base.rev + 1, lineage: [...base.lineage, writer].slice(-LINEAGE) }
     if ((await load($)).rev !== base.rev) continue
     await $.store.set(STORE_KEY, next)
     if (config.settleMs > 0) await $.clock.sleep(config.settleMs)
     const after = await load($)
-    // A later revision was built on ours; the same revision by another writer replaced ours.
-    if (after.writer === next.writer || after.rev > next.rev) {
+    if (after.lineage.includes(writer)) {
       await update($, DATA, () => after)
       return next
     }

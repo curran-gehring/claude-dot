@@ -82,10 +82,10 @@ Code resolves under your permission mode, the same as without the mod.
 - All state is one JSON value in the plugin's store, under your Claude Code config directory.
   Every open session on the machine shares it. A value that fails to parse is kept under a
   `corrupt-<time>` key and reported loudly; it is never dropped.
-- That store is last-writer-wins, so writes are optimistic. Each value carries a revision and a
-  writer token. A write starts over if the revision moved since it read. After a short settle
-  (`settleMs`), it re-reads; if another session wrote the same revision at that moment, it redoes
-  the change on top of theirs. That redo is also what keeps two sessions from starting the same
+- That store is last-writer-wins, so writes are optimistic. Each value carries a revision and
+  the lineage of writes it descends from. A write starts over if the revision moved since it
+  read. After a short settle (`settleMs`), it re-reads: the write survived exactly when it is
+  in the current lineage. If not, it redoes the change on top of what is there. That redo is also what keeps two sessions from starting the same
   job. The guard reads the store fresh on every call, so a rule added in one session applies in
   every other one immediately.
 - Each session writes a heartbeat. Work started by a session that closed is marked

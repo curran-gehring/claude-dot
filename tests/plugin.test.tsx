@@ -207,7 +207,24 @@ describe('sharing the store with other sessions', () => {
       if (isClobbered) return
       isClobbered = true
       // Another session read the same revision and wrote right after us, dropping our note.
-      s.set('data', { ...written, notes: [], rules: [rule('ask', 'Bash(npm publish*)')], writer: 'other-session' })
+      s.set('data', { ...written, notes: [], rules: [rule('ask', 'Bash(npm publish*)')], lineage: ['other-session'] })
+    })
+
+    await $.command.run(dot('note Prefers pnpm'))
+
+    const data = store.get('data') as DotData
+    expect(data.notes.map(n => n.text)).toEqual(['Prefers pnpm'])
+    expect(data.rules.map(r => r.action)).toEqual(['Bash(npm publish*)'])
+  })
+
+  test('a clobber followed by a newer write is still caught and redone', FAST, async ($, on) => {
+    let writes = 0
+    const store = sharedStore(on, stored(), (written, s) => {
+      writes += 1
+      if (writes !== 1) return
+      // B overwrote our revision without our note; C then wrote on top of B.
+      const clobber = { ...written, notes: [], lineage: ['b'] }
+      s.set('data', { ...clobber, rev: written.rev + 1, lineage: ['b', 'c'], rules: [rule('ask', 'Bash(npm publish*)')] })
     })
 
     await $.command.run(dot('note Prefers pnpm'))
