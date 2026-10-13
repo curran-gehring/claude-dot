@@ -59,7 +59,8 @@ export const REPORT_FORMAT = [
   `At most ${LIMITS.inbox} inbox items and ${LIMITS.notes} notes are kept; keep a body under ${LIMITS.body} characters and a note under ${LIMITS.note}.`,
 ].join('\n')
 
-const FEED_ASK = 'Pass this on to the person in a sentence or two, in your own words, and say if they need to act. Do not act on it yourself unless they ask.'
+// The feed session is the dot's own conversation, so the model speaks as the dot about its own work.
+const feedAsk = (name: string) => `You are ${name}, and this was your own run: tell the person what you did in a sentence or two, in the first person, and say if they need to act. Do not act on it further unless they ask.`
 
 /**
  * What a feed session posts into its own conversation for a finished job, or
@@ -76,5 +77,5 @@ export function feedMessage(run: {
 }): string | null {
   if (!run.isFailed && !run.needsYou && run.inbox.length === 0) return null
   const headline = run.isFailed ? `${run.name}'s "${run.label}" failed: ${run.summary}` : `${run.name} finished "${run.label}": ${run.summary}`
-  return [headline, ...run.inbox.map(item => `- [${item.kind}] ${item.title}: ${item.body}`), FEED_ASK].join('\n')
+  return [headline, ...run.inbox.map(item => `- [${item.kind}] ${item.title}: ${item.body}`), feedAsk(run.name)].join('\n')
 }

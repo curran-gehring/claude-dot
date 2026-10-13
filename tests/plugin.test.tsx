@@ -578,7 +578,7 @@ describe('the feed session', () => {
     expect(posted).toHaveLength(1)
     expect(posted[0]).toContain('Alfred finished "Check CI on main": deploy is blocked')
     expect(posted[0]).toContain('- [blocked] Deploy: needs a key')
-    expect(posted[0]).toContain('Pass this on to the person')
+    expect(posted[0]).toContain('You are Alfred, and this was your own run')
   })
 
   test('DOT_FEED=1 posts a failed run', async ($, on) => {

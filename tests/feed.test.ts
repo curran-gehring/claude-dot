@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { feedMessage } from '../hooks/core/report'
 
-const ASK = 'Pass this on to the person in a sentence or two, in your own words, and say if they need to act. Do not act on it yourself unless they ask.'
+const ASK = 'You are Alfred, and this was your own run: tell the person what you did in a sentence or two, in the first person, and say if they need to act. Do not act on it further unless they ask.'
 const quiet = { name: 'Alfred', label: 'Check CI on main', summary: 'all green', isFailed: false, needsYou: false, inbox: [] }
 
 describe('feedMessage', () => {
