@@ -113,8 +113,13 @@ Code resolves under your permission mode, the same as without the mod.
 - Each session writes a heartbeat. Work started by a session that closed is marked
   *interrupted*, so it can't block the next run.
 - The model in your main conversation gets a short section about your dot: its
-  responsibilities, recent notes and open inbox count. It also gets three tools:
-  `mcp__dot__assign`, `mcp__dot__note` and `mcp__dot__status`.
+  responsibilities, recent notes and open inbox count. It also gets five tools:
+  `mcp__dot__assign`, `mcp__dot__note`, `mcp__dot__status` (which lists the rules, numbered),
+  `mcp__dot__resolve` to close an inbox item once it's handled, and `mcp__dot__unrule` to remove
+  an **allow** rule that's no longer needed, such as a one-time permission it has used. Both name
+  the item by its number and the start of its text, so a renumbered list can't hit the wrong one.
+  `unrule` refuses `ask`, `handoff` and `when-asked` rules: removing one of those would give the
+  dot more room, so only you can, with `/dot unrule N`.
 
 ## Settings
 

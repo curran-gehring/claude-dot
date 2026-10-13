@@ -122,6 +122,64 @@ describe('/dot', () => {
   })
 })
 
+describe('the dot’s own tools', () => {
+  const item = (id: string, title: string) => ({ id, at: NOW, kind: 'blocked' as const, title, body: 'b', isUrgent: false, isDone: false })
+  // A refusal comes back as { deny }, an answer as { result }.
+  const call = async ($: { tool: { call: (input: never) => Promise<unknown> } }, tool: string, input: Record<string, unknown> = {}) => {
+    const out = (await $.tool.call({ tool: `mcp__dot__${tool}`, ...input } as never)) as { deny?: string, result?: unknown }
+    return out.deny !== undefined ? { text: out.deny, isError: true } : { text: String(out.result), isError: false }
+  }
+
+  test('status lists the rules, numbered, so they can be named', async ($, on) => {
+    given(on, stored({ rules: [rule('allow', 'git push to main'), rule('handoff', 'Bash(gh pr merge*)')] }))
+    const { text } = await call($, 'status')
+    expect(text).toContain('Rules:')
+    expect(text).toContain('1. [allow] git push to main')
+    expect(text).toContain('2. [handoff]')
+  })
+
+  test('resolve marks the named inbox item handled', async ($, on) => {
+    given(on, stored({ inbox: [item('i1', 'PR28 log'), item('i2', 'Checklists not pushed')] }))
+    const out = await call($, 'resolve', { item: 2, title: 'Checklists not pushed' })
+    expect(out.isError ?? false).toBe(false)
+    const inbox = (await $.command.run(dot('inbox'))).text
+    expect(inbox).toContain('PR28 log')
+    expect(inbox).not.toContain('Checklists not pushed')
+  })
+
+  test('resolve refuses when the number no longer points at that title', async ($, on) => {
+    given(on, stored({ inbox: [item('i1', 'PR28 log')] }))
+    expect((await call($, 'resolve', { item: 1, title: 'Something else' })).isError).toBe(true)
+    expect((await call($, 'resolve', { item: 3, title: 'PR28 log' })).isError).toBe(true)
+    expect((await $.command.run(dot('inbox'))).text).toContain('PR28 log')
+  })
+
+  test('unrule removes an allow rule it names', async ($, on) => {
+    given(on, stored({ rules: [rule('allow', 'sudo cat of one log'), rule('allow', 'git push to main')] }))
+    const out = await call($, 'unrule', { rule: 1, action: 'sudo cat of one log' })
+    expect(out.isError ?? false).toBe(false)
+    const rules = (await $.command.run(dot('rules'))).text
+    expect(rules).not.toContain('sudo cat')
+    expect(rules).toContain('git push to main')
+  })
+
+  test('unrule never removes a rule that holds the dot back', async ($, on) => {
+    given(on, stored({ rules: [rule('handoff', 'Bash(gh pr merge*)'), rule('ask', 'send email'), rule('when-asked', 'deploy')] }))
+    for (const [n, action] of [[1, 'Bash(gh pr merge*)'], [2, 'send email'], [3, 'deploy']] as const) {
+      const out = await call($, 'unrule', { rule: n, action })
+      expect(out.isError).toBe(true)
+      expect(out.text).toContain('/dot unrule')
+    }
+    expect((await $.command.run(dot('rules'))).text).toContain('3. [when-asked] deploy')
+  })
+
+  test('unrule refuses a stale number', async ($, on) => {
+    given(on, stored({ rules: [rule('allow', 'git push to main')] }))
+    expect((await call($, 'unrule', { rule: 1, action: 'sudo cat' })).isError).toBe(true)
+    expect((await $.command.run(dot('rules'))).text).toContain('git push to main')
+  })
+})
+
 describe('the band', () => {
   const BAND = {
     component: 'AbovePrompt',
@@ -448,6 +506,18 @@ describe('sharing the store with other sessions', () => {
 
     expect(await band.find({ text: /Jeeves/ })).toBeDefined()
     await band.unmount()
+  })
+
+  test('unrule leaves a rule another session tightened between the check and the write', async ($, on) => {
+    let swap = (): void => {}
+    const { store } = host(on, stored({ rules: [{ id: 'r1', level: 'allow', action: 'deploy' }] }), { onRun: () => swap() })
+    swap = () => {
+      store.set('data', { ...(store.get('data') as DotData), rules: [{ id: 'r1', level: 'handoff', action: 'deploy' }] })
+      swap = () => {}
+    }
+    const out = (await $.tool.call({ tool: 'mcp__dot__unrule', rule: 1, action: 'deploy' } as never)) as { deny?: string }
+    expect(out.deny).toContain('changed')
+    expect((store.get('data') as DotData).rules).toEqual([{ id: 'r1', level: 'handoff', action: 'deploy' }])
   })
 
   test('the guard reads rules another session just added', async ($, on) => {

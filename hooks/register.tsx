@@ -555,6 +555,16 @@ async function setPaused($: $, id: string, isPaused: boolean): Promise<void> {
   }))
 }
 
+/** Item `n` (1-based) of `list`, only when its text still starts with `start`; else why not. */
+function named<T>(list: readonly T[], n: unknown, start: unknown, textOf: (one: T) => string, what: string): T | string {
+  if (typeof n !== 'number' || !Number.isInteger(n)) return `${what} must be a whole number from mcp__dot__status`
+  if (typeof start !== 'string' || start.trim() === '') return `name the ${what} by the start of its text too`
+  const one = list[n - 1]
+  if (one === undefined) return `There is no ${what} ${n}. Read mcp__dot__status again.`
+  if (!textOf(one).toLowerCase().startsWith(start.trim().toLowerCase())) return `${what} ${n} is now "${textOf(one)}", not "${start}". Read mcp__dot__status again.`
+  return one
+}
+
 async function markDone($: $, id: string): Promise<void> {
   await mutate($, d => ({ ...d, inbox: d.inbox.map(item => (item.id === id ? { ...item, isDone: true } : item)) }))
 }
@@ -764,6 +774,32 @@ async function registerSurface($: $): Promise<void> {
     inputSchema: { type: 'object', properties: {} },
     isDeferred: false,
   })
+  await $.tool.register({
+    name: 'resolve',
+    description: 'Mark one of the dot\'s own inbox items handled, once what it asked for is done. Name it by its number in mcp__dot__status and the start of its title.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        item: { type: 'integer', description: 'The item\'s number in the inbox, from mcp__dot__status.' },
+        title: { type: 'string', description: 'The start of that item\'s title, so a renumbered inbox can\'t close the wrong one.' },
+      },
+      required: ['item', 'title'],
+    },
+    isDeferred: false,
+  })
+  await $.tool.register({
+    name: 'unrule',
+    description: 'Remove one of the person\'s allow rules that is no longer needed, such as a one-time permission that has been used. Only allow rules: a rule that holds the dot back (ask, handoff, when-asked) only the person can remove. Name it by its number in mcp__dot__status and the start of its action.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rule: { type: 'integer', description: 'The rule\'s number, from mcp__dot__status.' },
+        action: { type: 'string', description: 'The start of that rule\'s action, so a renumbered list can\'t remove the wrong one.' },
+      },
+      required: ['rule', 'action'],
+    },
+    isDeferred: false,
+  })
   await $.agent.register({ name: 'worker', description: 'The dot\'s background worker. Spawned by the dot only.', prompt: WORKER_SYSTEM })
   await $.agent.register({
     name: 'researcher',
@@ -873,6 +909,40 @@ export const register: Register = (on, options) => {
     try {
       const data = await mutate($, d => addNotes(d, [text], 'you', { now, newId }))
       return { result: `${nameOf(data)} noted it.` }
+    } catch (error) {
+      return { deny: messageOf(error) }
+    }
+  })
+
+  on('tool.call', { tool: 'mcp__dot__resolve' }, async ($, e) => {
+    const args = e as unknown as Record<string, unknown>
+    const open = openInbox(await refresh($))
+    const one = named(open, args.item, args.title, item => item.title, 'inbox item')
+    if (typeof one === 'string') return { deny: one }
+    try {
+      await markDone($, one.id)
+      return { result: `Done: ${one.title}` }
+    } catch (error) {
+      return { deny: messageOf(error) }
+    }
+  })
+
+  on('tool.call', { tool: 'mcp__dot__unrule' }, async ($, e) => {
+    const args = e as unknown as Record<string, unknown>
+    const one = named((await refresh($)).rules, args.rule, args.action, rule => rule.action, 'rule')
+    if (typeof one === 'string') return { deny: one }
+    // Removing anything but an allow rule would give the dot more room. That stays the person's call.
+    if (one.level !== 'allow') return { deny: `Rule ${String(args.rule)} is a ${one.level} rule, which holds the dot back. Only the person can remove it, with /dot unrule ${String(args.rule)}.` }
+    try {
+      // Checked again inside the locked write, so a rule another session changed meanwhile is never removed.
+      const removable = (r: DotRule) => r.id === one.id && r.level === 'allow' && r.action === one.action
+      let isRemoved = false
+      await mutate($, d => {
+        isRemoved = d.rules.some(removable)
+        return isRemoved ? { ...d, rules: d.rules.filter(r => !removable(r)) } : d
+      })
+      if (!isRemoved) return { deny: `Rule ${String(args.rule)} changed before it could be removed. Read mcp__dot__status again.` }
+      return { result: `Rule removed: [${one.level}] ${one.action}` }
     } catch (error) {
       return { deny: messageOf(error) }
     }

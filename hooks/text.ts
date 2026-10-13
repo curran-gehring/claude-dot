@@ -61,6 +61,9 @@ export function statusText(data: DotData, now: number, offset: Offset): string {
     'Responsibilities:',
     responsibilitiesText(data, now, offset),
     '',
+    'Rules:',
+    rulesText(data),
+    '',
     'Recently:',
     recent.length === 0 ? 'nothing yet' : recent.map(one => `${one.status === 'done' ? '✓' : '✗'} ${one.label}: ${one.summary ?? ''} (${ago(one.endedAt ?? one.startedAt, now)})`).join('\n'),
   ].join('\n')
