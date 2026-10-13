@@ -126,6 +126,15 @@ Under `pluginConfigs.dot` in your settings, or in the config menu:
 | `idleMinutes` | `10` | How long you must be away before research starts |
 | `reviewModel` | `haiku` | The model Auto-review uses |
 
+### Feed session
+
+Start one always-on session with `DOT_FEED=1` in its environment, for example
+`DOT_FEED=1 claude --remote-control`, and it becomes the dot's feed: when a background job
+fails, needs you, or leaves inbox items, the session posts it into its own conversation and the
+model passes it on in a sentence or two. A routine run with nothing new posts nothing. While the
+feed session is open, other sessions leave scheduled jobs and research to it, so their results
+reach the feed; with none open they run jobs as before. Only the exact value `1` turns this on.
+
 ## Limits
 
 - It runs while a Claude Code session is open. A schedule that comes due while no session is

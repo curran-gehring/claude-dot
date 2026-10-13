@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { emptyData } from '../hooks/core/data'
 import { moodOf } from '../hooks/core/avatar'
-import { abandonClaim, addInbox, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, selfPacedDue, finishWork, formatWhen, reapStale, skipRun } from '../hooks/core/ops'
+import { abandonClaim, addInbox, beat, hasLiveFeed, leave, addNotes, addResponsibility, ago, claimWork, dueResponsibilities, selfPacedDue, finishWork, formatWhen, reapStale, skipRun } from '../hooks/core/ops'
 
 const MIN = 60_000
 const UTC = () => 0
@@ -182,4 +182,33 @@ test('a rollback leaves alone what changed after its claim', async () => {
   const rolled = abandonClaim(rerun.data, 'a1', work.previous, 'could not start', at.now + 11 * MIN)
   expect(rolled.responsibilities[0]).toEqual(expect.objectContaining({ lastRunAt: at.now + 10 * MIN, nextRunAt: at.now + 70 * MIN }))
   expect(rolled.activity.find(a => a.id === 'a2')?.status).toBe('running')
+})
+
+describe('the feed session', () => {
+  test('a beat records the session as alive, and as the feed only when it is one', async () => {
+    const feed = beat(emptyData(), 'feed', NOW, true)
+    const both = beat(feed, 'other', NOW, false)
+
+    expect(both.heartbeats).toEqual({ feed: NOW, other: NOW })
+    expect(both.feedSessions).toEqual(['feed'])
+    expect(beat(both, 'feed', NOW + MIN, true).feedSessions).toEqual(['feed'])
+    expect(beat(both, 'feed', NOW + MIN, false).feedSessions).toEqual([])
+  })
+
+  test('another session’s fresh feed heartbeat is a live feed; mine, a stale one or none is not', async () => {
+    const data = beat(beat(emptyData(), 'feed', NOW, true), 'other', NOW, false)
+
+    expect(hasLiveFeed(data, NOW + 2 * MIN, 'other')).toBe(true)
+    expect(hasLiveFeed(data, NOW + 2 * MIN, 'feed')).toBe(false)
+    expect(hasLiveFeed(data, NOW + 10 * MIN, 'other')).toBe(false)
+    expect(hasLiveFeed(beat(emptyData(), 'other', NOW, false), NOW, 'other')).toBe(false)
+  })
+
+  test('a feed that left, or went a day without checking in, is forgotten', async () => {
+    const data = beat(beat(emptyData(), 'feed', NOW, true), 'other', NOW, false)
+
+    expect(leave(data, 'feed')).toEqual(expect.objectContaining({ heartbeats: { other: NOW }, feedSessions: [] }))
+    expect(reapStale(data, NOW + 2 * 24 * 60 * MIN).feedSessions).toEqual([])
+    expect(reapStale(data, NOW + MIN).feedSessions).toEqual(['feed'])
+  })
 })

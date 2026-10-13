@@ -194,6 +194,23 @@ export function failWork(data: DotData, activityId: string, reason: string, now:
   }
 }
 
+/** A session checks in; `isFeed` says whether it is the dot's feed. */
+export function beat(data: DotData, sessionId: string, now: number, isFeed: boolean): DotData {
+  const others = data.feedSessions.filter(id => id !== sessionId)
+  return { ...data, heartbeats: { ...data.heartbeats, [sessionId]: now }, feedSessions: isFeed ? [...others, sessionId] : others }
+}
+
+/** A session ends: it is neither alive nor the feed any more. */
+export function leave(data: DotData, sessionId: string): DotData {
+  const { [sessionId]: _gone, ...heartbeats } = data.heartbeats
+  return { ...data, heartbeats, feedSessions: data.feedSessions.filter(id => id !== sessionId) }
+}
+
+/** Whether a session other than `selfId` is the feed and has checked in lately: the feed alone starts scheduled jobs. */
+export function hasLiveFeed(data: DotData, now: number, selfId: string): boolean {
+  return data.feedSessions.some(id => id !== selfId && (data.heartbeats[id] ?? 0) >= now - HEARTBEAT_STALE)
+}
+
 export function reapStale(data: DotData, now: number): DotData {
   const isAlive = (sessionId: string) => (data.heartbeats[sessionId] ?? 0) >= now - HEARTBEAT_STALE
   const heartbeats = Object.fromEntries(Object.entries(data.heartbeats).filter(([, at]) => at >= now - DAY))
@@ -201,6 +218,7 @@ export function reapStale(data: DotData, now: number): DotData {
   return {
     ...data,
     heartbeats,
+    feedSessions: data.feedSessions.filter(id => id in heartbeats),
     activity: data.activity.map(one => {
       if (one.status !== 'running') return one
       if (!isAlive(one.sessionId)) return { ...one, status: 'failed', endedAt: now, summary: 'interrupted: its session closed before it finished' }

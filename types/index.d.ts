@@ -83,6 +83,8 @@ export type DotData = {
   lastResearchAt: Record<string, number>
   /** Last time each open Claude Code session checked in, by session id. */
   heartbeats: Record<string, number>
+  /** The sessions started with DOT_FEED=1; while one is alive (see heartbeats), only it starts scheduled jobs. */
+  feedSessions: string[]
 }
 
 declare module 'claude-code' {

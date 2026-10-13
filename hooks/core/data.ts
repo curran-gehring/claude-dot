@@ -24,6 +24,7 @@ export function emptyData(): DotData {
     settings: { isAsleep: false, isAutoReview: true, isBandShown: true },
     lastResearchAt: {},
     heartbeats: {},
+    feedSessions: [],
   }
 }
 
@@ -59,6 +60,8 @@ export function decodeData(raw: unknown): DotData {
     },
     lastResearchAt,
     heartbeats,
+    // Stores written before the feed existed have no field: no feed session.
+    feedSessions: value.feedSessions === undefined ? [] : list(value.feedSessions, `${at}.feedSessions`, str),
   }
 }
 

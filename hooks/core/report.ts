@@ -58,3 +58,23 @@ export const REPORT_FORMAT = [
   'Leave inbox empty when there is nothing worth the person\'s attention. Notes are facts, not a log of what you did.',
   `At most ${LIMITS.inbox} inbox items and ${LIMITS.notes} notes are kept; keep a body under ${LIMITS.body} characters and a note under ${LIMITS.note}.`,
 ].join('\n')
+
+const FEED_ASK = 'Pass this on to the person in a sentence or two, in your own words, and say if they need to act. Do not act on it yourself unless they ask.'
+
+/**
+ * What a feed session posts into its own conversation for a finished job, or
+ * null when it is not worth a turn: only a failure, a result that needs the
+ * person, or inbox items are. The last line tells the model to relay it, not act.
+ */
+export function feedMessage(run: {
+  name: string
+  label: string
+  summary: string
+  isFailed: boolean
+  needsYou: boolean
+  inbox: ReadonlyArray<{ kind: string; title: string; body: string }>
+}): string | null {
+  if (!run.isFailed && !run.needsYou && run.inbox.length === 0) return null
+  const headline = run.isFailed ? `${run.name}'s "${run.label}" failed: ${run.summary}` : `${run.name} finished "${run.label}": ${run.summary}`
+  return [headline, ...run.inbox.map(item => `- [${item.kind}] ${item.title}: ${item.body}`), FEED_ASK].join('\n')
+}

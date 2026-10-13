@@ -6,9 +6,9 @@ import { DEFAULT_LOOK, face } from './core/avatar'
 import { HELP, parseCommand } from './core/command'
 import type { DotCommand } from './core/command'
 import { DotDataError, decodeData, emptyData } from './core/data'
-import { abandonClaim, addInbox, addNotes, addResponsibility, claimWork, dueResponsibilities, finishWork, reapStale, selfPacedDue, skipRun } from './core/ops'
+import { abandonClaim, addInbox, addNotes, addResponsibility, beat, claimWork, dueResponsibilities, finishWork, hasLiveFeed, leave, reapStale, selfPacedDue, skipRun } from './core/ops'
 import type { Job, Previous } from './core/ops'
-import { parseReport } from './core/report'
+import { feedMessage, parseReport } from './core/report'
 import { REVIEW_SYSTEM, buildReviewPrompt, parseVerdict } from './core/review'
 import type { Review } from './core/review'
 import { READ_ONLY_TOOLS, afterReview, decide, unattended } from './core/decide'
@@ -55,6 +55,8 @@ const session = {
   id: 'unknown',
   cwd: '',
   isInteractive: false,
+  /** DOT_FEED=1: this session is the dot's feed, where finished jobs are posted into the conversation. */
+  isFeed: false,
   lastPersonAt: 0,
   isMainTurnRunning: false,
   isTicking: false,
@@ -358,12 +360,13 @@ async function collect($: $, agentId: string, answer: string, isAborted: boolean
 
   const now = await $.clock.now()
   const outcome = isAborted ? { error: 'it was stopped before it finished' } : parseReport(answer)
-  const held: { summary: string | null; isFailed: boolean } = { summary: null, isFailed: false }
+  const held: { summary: string | null; label: string; isFailed: boolean } = { summary: null, label: '', isFailed: false }
   let data: DotData
   try {
     data = await mutate($, d => {
       const finished = finishWork(d, agentId, outcome, { now, newId })
       held.summary = finished?.activity.summary ?? null
+      held.label = finished?.activity.label ?? ''
       held.isFailed = finished?.activity.status === 'failed'
       return finished?.data ?? d
     })
@@ -378,6 +381,19 @@ async function collect($: $, agentId: string, answer: string, isAborted: boolean
   $.ui.toast(`${name}: ${held.summary}`)
   if (held.isFailed || ('needsYou' in outcome && outcome.needsYou)) {
     void $.ui.notify(held.summary, { title: name })
+  }
+  if (session.isFeed) {
+    const text = feedMessage({
+      name,
+      label: held.label,
+      summary: held.summary,
+      isFailed: held.isFailed,
+      needsYou: 'needsYou' in outcome && outcome.needsYou,
+      inbox: 'inbox' in outcome ? outcome.inbox : [],
+    })
+    if (text !== null) {
+      void $.prompt.submit({ text }).catch((error: unknown) => $.ui.log(`dot: could not post to the feed: ${messageOf(error)}`, { to: 'debug' }))
+    }
   }
   return true
 }
@@ -408,8 +424,10 @@ async function tick($: $): Promise<void> {
     for (const [agentId, held] of [...session.unclaimed]) {
       if (running.has(agentId)) await collect($, agentId, held.answer, held.isAborted)
     }
-    const data = await mutate($, d => reapStale({ ...d, heartbeats: { ...d.heartbeats, [session.id]: now } }, now))
+    const data = await mutate($, d => reapStale(beat(d, session.id, now, session.isFeed), now))
     if (data.dot === null || data.settings.isAsleep || !session.isInteractive) return
+    // A live feed session starts the scheduled jobs, so their results reach its conversation.
+    if (!session.isFeed && hasLiveFeed(data, now, session.id)) return
 
     for (const due of dueResponsibilities(data, now)) {
       if (!(await isWanted($, due))) {
@@ -777,11 +795,12 @@ export const register: Register = (on, options) => {
     session.isEnded = false
     session.cwd = e.cwd
     session.isInteractive = e.isInteractive
+    session.isFeed = (await $.env.get('DOT_FEED')) === '1'
     session.lastPersonAt = await $.clock.now()
     await registerSurface($)
 
     const now = await $.clock.now()
-    await mutate($, d => reapStale({ ...d, heartbeats: { ...d.heartbeats, [session.id]: now } }, now))
+    await mutate($, d => reapStale(beat(d, session.id, now, session.isFeed), now))
     session.ticker?.cancel()
     session.ticker = session.isInteractive ? $.clock.every(MIN, () => void tick($)) : null
     session.watcher?.cancel()
@@ -797,11 +816,9 @@ export const register: Register = (on, options) => {
     session.watcher?.cancel()
     session.watcher = null
     session.isInteractive = false
+    session.isFeed = false
     // Let other sessions see at once that work started here will not finish.
-    await mutate($, d => {
-      const { [session.id]: _gone, ...heartbeats } = d.heartbeats
-      return { ...d, heartbeats }
-    })
+    await mutate($, d => leave(d, session.id))
     return next(e)
   })
 

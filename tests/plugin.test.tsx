@@ -13,11 +13,11 @@ function stored(change: Partial<DotData> = {}): DotData {
 }
 
 /** What a session answers beneath the plugin: the time, the project and the stored dot. */
-function given(on: On, data: DotData | undefined) {
-  mock.clock(on, { now: NOW })
+function given(on: On, data: DotData | undefined, env: Record<string, string> = {}) {
+  const clock = mock.clock(on, { now: NOW })
   mock.store(on, data === undefined ? {} : { data })
   on('session.cwd', () => ({ value: 'C:/Dev/app' }))
-  on('env.get', (_$, e) => ({ value: ({ HOME: '/home/me', USERNAME: 'Curran' } as Record<string, string>)[e.name] }))
+  on('env.get', (_$, e) => ({ value: ({ HOME: '/home/me', USERNAME: 'Curran', ...env } as Record<string, string>)[e.name] }))
   // The store lock is always free here; the sharing tests below hold it.
   const owner = { token: '' }
   on('process.run', () => ({ value: { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }))
@@ -26,6 +26,7 @@ function given(on: On, data: DotData | undefined) {
     return { value: undefined }
   })
   on('fs.read', () => ({ value: owner.token }))
+  return clock
 }
 
 /** `/dot <args>` as the person would type it. */
@@ -459,3 +460,119 @@ describe('sharing the store with other sessions', () => {
     expect((await $.tool.check({ tool: 'Bash', input: { command: 'gh pr merge 3' } })).decision).toBe('deny')
   })
 })
+
+describe('the feed session', () => {
+  const REPORT = (report: object) => `Done.\n\`\`\`json\n${JSON.stringify(report)}\n\`\`\``
+  const running = (agentId: string) => ({
+    id: 'a1', kind: 'work' as const, label: 'Check CI on main', cwd: 'C:/Dev/app', responsibilityId: null, agentId,
+    sessionId: 's1', status: 'running' as const, startedAt: NOW, endedAt: null, summary: null,
+  })
+
+  /** What the host answers beneath the plugin when a session starts and an agent finishes. */
+  function underneath(on: On) {
+    on('session.start', (_$, e) => ({ cwd: e.cwd }))
+    on('session.id', () => ({ value: 's1' }))
+    on('command.register', () => ({ value: undefined }))
+    on('tool.register', () => ({ value: undefined }))
+    on('agent.register', () => ({ value: undefined }))
+    on('turn.complete', (_$, e) => ({ text: e.answer }))
+    on('ui.toast', () => ({ value: undefined }))
+    on('ui.notify', () => ({ value: undefined }))
+    on('ui.log', () => ({ value: undefined }))
+  }
+
+  async function finish($: Parameters<Parameters<typeof test>[1]>[0], answer: string) {
+    await $.session.start({ cwd: 'C:/Dev/app', surface: null, isInteractive: false })
+    await $.turn.complete({ agentId: 'agent-1', answer, durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+    // The post is not awaited by the collector (it queues behind the running turn): let it reach the host.
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+
+  /** A session that is (or is not) the feed, with one job running; returns what it posted into its conversation. */
+  async function finishing(on: On, $: Parameters<Parameters<typeof test>[1]>[0], env: Record<string, string>, answer: string) {
+    given(on, stored({ activity: [running('agent-1')] }), env)
+    underneath(on)
+    const posted: string[] = []
+    on('prompt.submit', (_$, e) => {
+      posted.push(e.text)
+      return { text: e.text }
+    })
+
+    await finish($, answer)
+    return posted
+  }
+
+  test('DOT_FEED=1 posts a result that needs the person into the conversation, once', async ($, on) => {
+    const posted = await finishing(on, $, { DOT_FEED: '1' }, REPORT({ summary: 'deploy is blocked', needsYou: true, inbox: [{ kind: 'blocked', title: 'Deploy', body: 'needs a key' }] }))
+
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toContain('Alfred finished "Check CI on main": deploy is blocked')
+    expect(posted[0]).toContain('- [blocked] Deploy: needs a key')
+    expect(posted[0]).toContain('Pass this on to the person')
+  })
+
+  test('DOT_FEED=1 posts a failed run', async ($, on) => {
+    const posted = await finishing(on, $, { DOT_FEED: '1' }, 'no report here')
+
+    expect(posted).toHaveLength(1)
+    expect(posted[0]).toContain('Alfred\'s "Check CI on main" failed: could not report')
+  })
+
+  test('DOT_FEED=1 posts nothing for a routine run with nothing new', async ($, on) => {
+    expect(await finishing(on, $, { DOT_FEED: '1' }, REPORT({ summary: 'all green' }))).toEqual([])
+  })
+
+  test('without DOT_FEED=1 nothing is posted, however much news', async ($, on) => {
+    const news = REPORT({ summary: 'deploy is blocked', needsYou: true })
+
+    expect(await finishing(on, $, {}, news)).toEqual([])
+  })
+
+  test('only the exact value 1 makes a feed', async ($, on) => {
+    expect(await finishing(on, $, { DOT_FEED: 'true' }, REPORT({ summary: 'blocked', needsYou: true }))).toEqual([])
+  })
+
+  test('a post that is refused never breaks collecting the report', async ($, on) => {
+    given(on, stored({ activity: [running('agent-1')] }), { DOT_FEED: '1' })
+    underneath(on)
+    on('prompt.submit', () => { throw new Error('busy') })
+
+    await finish($, REPORT({ summary: 'blocked', needsYou: true }))
+
+    expect((await $.command.run(dot('inbox'))).text).toContain('blocked')
+  })
+
+  /** An interactive session whose scheduler has one responsibility due; returns the jobs it started. */
+  async function schedulerTick(on: On, $: Parameters<Parameters<typeof test>[1]>[0], other: Partial<DotData>) {
+    const due = {
+      id: 'r1', text: 'Check CI on main', schedule: { kind: 'interval' as const, minutes: 60 }, cwd: 'C:/Dev/app', createdAt: NOW,
+      nextRunAt: NOW, lastRunAt: null, lastSummary: null, isPaused: false, check: null,
+    }
+    const clock = given(on, stored({ responsibilities: [due], ...other }))
+    underneath(on)
+    const started: string[] = []
+    on('agent.spawn', (_$, e) => {
+      started.push(e.description)
+      return { agentId: `agent-${started.length}`, model: 'sonnet' }
+    })
+
+    await $.session.start({ cwd: 'C:/Dev/app', surface: null, isInteractive: true })
+    await clock.advance(60_000)
+    return started
+  }
+
+  test('a session that is not the feed leaves scheduled jobs to a live feed', async ($, on) => {
+    const started = await schedulerTick(on, $, { heartbeats: { feed: NOW }, feedSessions: ['feed'] })
+
+    expect(started).toEqual([])
+  })
+
+  test('with no live feed, scheduled jobs start as ever', async ($, on) => {
+    expect(await schedulerTick(on, $, {})).toHaveLength(1)
+  })
+
+  test('a feed that stopped checking in no longer holds the jobs back', async ($, on) => {
+    expect(await schedulerTick(on, $, { heartbeats: { feed: NOW - 10 * 60_000 }, feedSessions: ['feed'] })).toHaveLength(1)
+  })
+})
+

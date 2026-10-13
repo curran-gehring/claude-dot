@@ -125,6 +125,15 @@ describe('decodeData', () => {
     expect(decodeData(JSON.parse(JSON.stringify(data)))).toEqual(data)
   })
 
+  test('a store written before the feed existed has no feed session; a malformed list throws', async () => {
+    const { feedSessions: _none, ...old } = emptyData()
+
+    expect(decodeData(JSON.parse(JSON.stringify(old)))).toEqual(emptyData())
+    expect(decodeData({ ...old, feedSessions: ['s1'] }).feedSessions).toEqual(['s1'])
+    expect(() => decodeData({ ...old, feedSessions: 's1' })).toThrow('feedSessions')
+    expect(() => decodeData({ ...old, feedSessions: [1] })).toThrow('feedSessions')
+  })
+
   test('a schedule out of range is malformed', async () => {
     const withSchedule = (schedule: unknown) => ({
       ...emptyData(),
